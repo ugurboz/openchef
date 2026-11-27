@@ -4,11 +4,11 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use openchef_api::{
-    ApprovalListParams, AskParams, AskResult, CODE_INVALID_PARAMS, DecideParams,
+    ApprovalListParams, AskParams, AskResult, CODE_INVALID_PARAMS, CODE_TASK_INVALID, DecideParams,
     METHOD_APPROVAL_ASK, METHOD_APPROVAL_DECIDE, METHOD_APPROVAL_LIST, Verdict, rpc_error,
 };
 use openchef_core::{ApprovalKind, ApprovalStatus};
-use openchef_engine::service::{AskRequest, Service};
+use openchef_engine::service::{AskRequest, Error as ServiceError, Service};
 use openchef_runtime::linerpc::RpcError;
 use openchef_store::ApprovalFilter;
 use serde_json::Value;
@@ -67,11 +67,15 @@ async fn decide(s: &Service, params: Value) -> Result<Value, RpcError> {
         Verdict::Answer => ApprovalStatus::Answered,
     };
     let text = p.text.filter(|t| !t.is_empty());
-    encode(
-        &s.decide(p.id, status, text)
-            .await
-            .map_err(|e| rpc_err(&e))?,
-    )
+    match s.decide(p.id, status, text).await {
+        Ok(a) => encode(&a),
+        // Users settle "requests" (`openchef approve 12`), whatever the store calls them.
+        Err(ServiceError::Store(e)) if e.is_not_found() => Err(rpc_error(
+            CODE_TASK_INVALID,
+            format!("no such request {}", p.id),
+        )),
+        Err(e) => Err(rpc_err(&e)),
+    }
 }
 
 /// Waits for the answer; the client going away withdraws the question.

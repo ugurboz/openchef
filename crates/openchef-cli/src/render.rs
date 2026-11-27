@@ -44,11 +44,20 @@ impl<'w> Renderer<'w> {
             return writeln!(self.w, "{line}");
         }
         if self.quiet {
-            // Quiet still shows what needs the user: the outcome.
-            return if ev.kind == EventKind::TaskStatus {
-                self.status(ev)
-            } else {
-                Ok(())
+            // Quiet still shows what needs the user: the outcome, and the requests that
+            // wait for them with their decisions.
+            return match ev.kind {
+                EventKind::TaskStatus => self.status(ev),
+                EventKind::ApprovalRequested => self.approval(ev, true),
+                EventKind::ApprovalDecided => self.approval(ev, false),
+                EventKind::StepStarted
+                | EventKind::AttemptStarted
+                | EventKind::Agent
+                | EventKind::VerifyStarted
+                | EventKind::VerifyFinished
+                | EventKind::AttemptEnded
+                | EventKind::StepFinished
+                | EventKind::Notice => Ok(()),
             };
         }
         let msg = ev.message.as_deref().unwrap_or("");

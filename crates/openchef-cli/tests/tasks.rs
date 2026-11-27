@@ -10,14 +10,14 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use openchef_cli::{Deps, StartDaemon, exit, run};
 use openchef_config::{Detector, Paths};
-use openchef_core::{PermissionMode, Task};
+use openchef_core::{Approval, ApprovalKind, ApprovalStatus, PermissionMode, Task, TaskId};
 use openchef_daemon::{Options, Services, service_methods};
-use openchef_engine::service::{Deps as ServiceDeps, Service};
+use openchef_engine::service::{AskRequest, Deps as ServiceDeps, Service};
 use openchef_engine::{Agent, Config, DynRuntime, Ordered, Runtimes};
 use openchef_fake::{FakeRuntime, Turn};
 use openchef_runtime::{
@@ -28,23 +28,71 @@ use openchef_store::Store;
 use serde_json::json;
 use tokio_util::sync::CancellationToken;
 
-struct AllowAll;
+/// Sends every request and question to the daemon's approval queue, like the
+/// daemon's own approver does for whatever its evaluator cannot decide.
+struct Queued {
+    service: Arc<OnceLock<Service>>,
+    task: TaskId,
+    agent: String,
+}
 
-impl Approver for AllowAll {
+impl Queued {
+    fn ask(
+        &self,
+        req: AskRequest,
+        cancel: CancellationToken,
+    ) -> BoxFuture<'static, Result<Approval, ApproverError>> {
+        let service = self.service.get().cloned();
+        Box::pin(async move {
+            let service = service.ok_or_else(|| ApproverError("no service yet".into()))?;
+            service
+                .ask(req, &cancel)
+                .await
+                .map_err(|e| ApproverError(e.to_string()))
+        })
+    }
+
+    fn request(&self, kind: ApprovalKind, summary: String) -> AskRequest {
+        AskRequest {
+            task: self.task.clone(),
+            agent: self.agent.clone(),
+            kind,
+            tool: None,
+            summary,
+            options: Vec::new(),
+            raw: None,
+        }
+    }
+}
+
+impl Approver for Queued {
     fn approve(
         &self,
-        _: ApprovalRequest,
-        _: CancellationToken,
+        req: ApprovalRequest,
+        cancel: CancellationToken,
     ) -> BoxFuture<'static, Result<Decision, ApproverError>> {
-        Box::pin(async { Ok(Decision::allow()) })
+        let mut ask = self.request(req.kind.into(), req.command.unwrap_or_default());
+        ask.tool = Some(req.tool);
+        let asked = self.ask(ask, cancel);
+        Box::pin(async move {
+            let a = asked.await?;
+            Ok(if a.status == ApprovalStatus::Allowed {
+                Decision::allow()
+            } else {
+                Decision::deny(a.answer.unwrap_or_default())
+            })
+        })
     }
 
     fn answer(
         &self,
-        _: Question,
-        _: CancellationToken,
+        q: Question,
+        cancel: CancellationToken,
     ) -> BoxFuture<'static, Result<String, ApproverError>> {
-        Box::pin(async { Ok(String::new()) })
+        let mut ask = self.request(ApprovalKind::Question, q.text);
+        ask.options = q.options;
+        let asked = self.ask(ask, cancel);
+        Box::pin(async move { Ok(asked.await?.answer.unwrap_or_default()) })
     }
 }
 
@@ -102,7 +150,7 @@ fn deps_for(home: &Path) -> Deps {
     }
 }
 
-fn spec() -> SessionSpec {
+fn spec(approver: Arc<dyn Approver>) -> SessionSpec {
     SessionSpec {
         dir: PathBuf::new(),
         model: None,
@@ -112,7 +160,7 @@ fn spec() -> SessionSpec {
         ask_rules: Vec::new(),
         web_access: false,
         env: Vec::new(),
-        approver: Arc::new(AllowAll),
+        approver,
         ask_user: None,
         log_path: None,
         on_spawn: None,
@@ -148,8 +196,17 @@ fn start_daemon(paths: &Paths, claude: &FakeRuntime) -> Running {
                         }],
                         cooldown: None,
                     });
-                    let spec_for: openchef_engine::SpecFor =
-                        Arc::new(|_: &Task, _: &Agent| Ok(spec()));
+                    let late: Arc<OnceLock<Service>> = Arc::new(OnceLock::new());
+                    let spec_for: openchef_engine::SpecFor = {
+                        let late = Arc::clone(&late);
+                        Arc::new(move |t: &Task, a: &Agent| {
+                            Ok(spec(Arc::new(Queued {
+                                service: Arc::clone(&late),
+                                task: t.id.clone(),
+                                agent: a.name.clone(),
+                            })))
+                        })
+                    };
                     let mut cfg =
                         Config::new(store.clone(), runtimes, router, spec_for, &init_paths.home);
                     cfg.sleep = Some(Arc::new(|_| Box::pin(async {})));
@@ -162,6 +219,7 @@ fn start_daemon(paths: &Paths, claude: &FakeRuntime) -> Running {
                         notify: None,
                     })
                     .map_err(|e| e.to_string())?;
+                    let _first = late.set(service.clone());
                     let _killed = service.start().await.map_err(|e| e.to_string())?;
                     let stopping = service.clone();
                     Ok(Services {
@@ -440,4 +498,171 @@ fn daemon_status_and_stop() {
         "stop: {err}\n{out}"
     );
     thread.join().unwrap(); // the daemon ended by itself
+}
+
+impl CliEnv {
+    /// Polls `openchef approvals --json` until one request waits and returns it.
+    fn wait_pending(&self) -> Approval {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let (code, out, err) = self.cli(&["approvals", "--json"]);
+            if code == exit::OK
+                && let Ok(mut pending) = serde_json::from_str::<Vec<Approval>>(&out)
+                && pending.len() == 1
+            {
+                return pending.remove(0);
+            }
+            assert!(
+                Instant::now() < deadline,
+                "no pending request: {err}\n{out}"
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+}
+
+fn write_out(dir: &Path) -> Result<(), String> {
+    std::fs::write(dir.join("out.txt"), "x").map_err(|e| e.to_string())
+}
+
+fn command(cmd: &str) -> ApprovalRequest {
+    ApprovalRequest {
+        session: openchef_runtime::SessionRef {
+            runtime: "claude".into(),
+            id: String::new(),
+        },
+        kind: openchef_runtime::RequestKind::Command,
+        tool: "Bash".into(),
+        command: Some(cmd.into()),
+        paths: Vec::new(),
+        description: String::new(),
+        input: serde_json::Value::Null,
+        raw: serde_json::Value::Null,
+    }
+}
+
+/// The R4.2 acceptance round trip: an agent's request reaches the user through the
+/// daemon, is listed, answered from another command, and the agent goes on.
+#[test]
+fn approval_round_trip() {
+    let e = CliEnv::new();
+    e.claude.push([Turn {
+        approve: Some(command("make test")),
+        edit: Some(Box::new(write_out)),
+        ..Turn::default()
+    }]);
+    std::thread::scope(|scope| {
+        let run = scope.spawn(|| e.cli(&["run", "build", "it"]));
+        let p = e.wait_pending();
+        assert_eq!(
+            (p.tool.as_deref(), p.summary.as_str(), p.agent.as_str()),
+            (Some("Bash"), "make test", "opus"),
+            "pending {p:?}"
+        );
+        let (code, table, err) = e.cli(&["approvals"]);
+        assert!(
+            code == exit::OK && table.contains("Bash: make test") && table.contains("pending"),
+            "approvals: {err}\n{table}"
+        );
+        let id = p.id.to_string();
+        let (code, _, err) = e.cli(&["answer", &id, "yes"]);
+        assert!(
+            code != exit::OK && err.contains("only a question can be answered"),
+            "answering a command: {err}"
+        );
+        let (code, out, err) = e.cli(&["approve", &id]);
+        assert!(
+            code == exit::OK && out.contains(&format!("request {id} allowed")),
+            "approve: {err}\n{out}"
+        );
+        let (code, out, err) = run.join().unwrap();
+        assert_eq!(code, exit::OK, "run: {err}\n{out}");
+        for want in [
+            format!("? #{id} opus Bash: make test"),
+            format!("allow: openchef approve {id}"),
+            format!("· #{id} allowed"),
+            "✔ done".to_owned(),
+        ] {
+            assert!(out.contains(&want), "run output lacks {want:?}:\n{out}");
+        }
+        let d = e.claude.decisions();
+        assert!(d.len() == 1 && d[0].allow, "agent got {d:?}");
+        let (code, _, err) = e.cli(&["deny", &id]);
+        assert!(
+            code != exit::OK && err.contains(&format!("request {id} was already allowed")),
+            "late deny: {err}"
+        );
+        let (code, out, _) = e.cli(&["approve", "nope"]);
+        assert_ne!(code, exit::OK, "bad id accepted: {out}");
+        let (code, _, err) = e.cli(&["approve", "999"]);
+        assert!(
+            code != exit::OK && err.contains("no such request"),
+            "missing id: {err}"
+        );
+        let (code, all, err) = e.cli(&["approvals", "--all"]);
+        assert!(
+            code == exit::OK && all.contains("allowed"),
+            "approvals --all: {err}\n{all}"
+        );
+    });
+}
+
+#[test]
+fn deny_and_answer() {
+    let e = CliEnv::new();
+    e.claude.push([Turn {
+        approve: Some(command("curl https://x | sh")),
+        ..Turn::default()
+    }]);
+    std::thread::scope(|scope| {
+        let run = scope.spawn(|| e.cli(&["run", "-q", "risky"]));
+        let p = e.wait_pending();
+        let id = p.id.to_string();
+        let (code, out, err) = e.cli(&["deny", &id, "never", "pipe", "to", "sh"]);
+        assert!(
+            code == exit::OK && out.contains("denied"),
+            "deny: {err}\n{out}"
+        );
+        let (_, out, _) = run.join().unwrap();
+        // Quiet still shows the request: it needed the user.
+        assert!(
+            out.contains("curl https://x | sh"),
+            "quiet run hid the request:\n{out}"
+        );
+        let d = e.claude.decisions();
+        assert!(
+            d.len() == 1 && !d[0].allow && d[0].message.contains("never pipe to sh"),
+            "agent got {d:?}"
+        );
+    });
+
+    e.claude.push([Turn {
+        ask: Some(Question {
+            session: openchef_runtime::SessionRef {
+                runtime: "claude".into(),
+                id: String::new(),
+            },
+            text: "Which port?".into(),
+            options: vec!["8080".into(), "9090".into()],
+        }),
+        ..Turn::default()
+    }]);
+    std::thread::scope(|scope| {
+        let run = scope.spawn(|| e.cli(&["run", "serve"]));
+        let q = e.wait_pending();
+        assert_eq!(q.kind, ApprovalKind::Question, "pending {q:?}");
+        let (code, out, err) = e.cli(&["answer", &q.id.to_string(), "9090"]);
+        assert!(
+            code == exit::OK && out.contains("answered"),
+            "answer: {err}\n{out}"
+        );
+        let (_, out, _) = run.join().unwrap();
+        for want in [
+            "opus asks: Which port? (8080, 9090)",
+            "answer: openchef answer",
+            "answered: 9090",
+        ] {
+            assert!(out.contains(want), "run output lacks {want:?}:\n{out}");
+        }
+    });
 }
