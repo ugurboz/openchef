@@ -5,7 +5,7 @@
 #![cfg_attr(not(unix), allow(dead_code, unused_imports, clippy::unused_async))]
 
 use std::collections::{HashMap, HashSet};
-use std::sync::{Arc, Mutex, OnceLock, PoisonError};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use openchef_api::{
@@ -196,21 +196,28 @@ impl Server {
             r.next += 1;
             r.next
         };
-        // The peer starts dispatching before `from_unix` returns; handlers wait for it.
-        let cell: Arc<OnceLock<Peer>> = Arc::new(OnceLock::new());
+        // The peer starts dispatching before `from_unix` returns, so a request can
+        // arrive before the peer is known; its handler waits for it.
+        let (ready_tx, ready_rx) = tokio::sync::watch::channel::<Option<Peer>>(None);
         let handler: Handler = {
-            let (server, cell) = (Arc::clone(self), Arc::clone(&cell));
-            Arc::new(move |method, params, cancel| match cell.get() {
-                Some(peer) => server.handle(
-                    Conn {
-                        id,
-                        peer: peer.clone(),
-                    },
-                    &method,
-                    params,
-                    cancel,
-                ),
-                None => Box::pin(async { Err(RpcError::server("connection is not ready")) }),
+            let server = Arc::clone(self);
+            Arc::new(move |method, params, cancel| {
+                let (server, mut ready) = (Arc::clone(&server), ready_rx.clone());
+                Box::pin(async move {
+                    let peer = tokio::select! {
+                        got = ready.wait_for(Option::is_some) => match got {
+                            Ok(p) => p.clone(),
+                            Err(_) => None,
+                        },
+                        () = cancel.cancelled() => None,
+                    };
+                    let Some(peer) = peer else {
+                        return Err(RpcError::server("connection closed before it was ready"));
+                    };
+                    server
+                        .handle(Conn { id, peer }, &method, params, cancel)
+                        .await
+                })
             })
         };
         let options = PeerOptions {
@@ -221,12 +228,14 @@ impl Server {
             Ok(c) => c,
             Err(e) => return eprintln_note(&format!("daemon: open connection: {e}")),
         };
-        let _set = cell.set(connection.peer.clone());
+        // No receiver left only means no request arrived yet; the peer is kept anyway.
+        let _ready = ready_tx.send(Some(connection.peer.clone()));
         let closed = connection.peer.closed();
         drop(self.registry().open.insert(id, connection));
         let server = Arc::clone(self);
         drop(tokio::spawn(async move {
             closed.cancelled().await;
+            drop(ready_tx); // kept until the connection ends, so late handlers see the peer
             server.drop_conn(id);
         }));
     }
