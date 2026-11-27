@@ -4,6 +4,7 @@ pub(crate) mod approvals;
 pub(crate) mod daemon;
 pub(crate) mod doctor;
 pub(crate) mod init;
+pub(crate) mod mcp;
 pub(crate) mod tasks;
 pub(crate) mod version;
 
@@ -11,7 +12,7 @@ use std::io::Write;
 
 use clap::CommandFactory as _;
 
-use crate::cli::{Cli, Command, PENDING};
+use crate::cli::{Cli, Command, McpCommand, PENDING};
 use crate::{Deps, exit};
 
 /// Runs the parsed command and returns its exit code.
@@ -77,6 +78,9 @@ pub(crate) fn dispatch(
             &args,
             tasks::Action::Retry,
         ),
+        Some(Command::Mcp {
+            command: McpCommand::AskUser(args),
+        }) => mcp::ask_user(deps, &deps.paths(cli.home.as_ref())?, &args),
         Some(Command::Pending(words)) => {
             let name = words.first().map_or("", String::as_str);
             match PENDING.iter().find(|(n, _)| *n == name) {

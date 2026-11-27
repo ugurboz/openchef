@@ -20,6 +20,10 @@ pub use commands::version::BuildInfo;
 /// Starts a background daemon when a command needs one.
 pub type StartDaemon = Arc<dyn Fn(&Paths) -> anyhow::Result<()> + Send + Sync>;
 
+/// The input and output an MCP server speaks over (`openchef mcp ask-user`).
+pub type McpStdio =
+    Arc<dyn Fn() -> (Box<dyn std::io::Read + Send>, Box<dyn Write + Send>) + Send + Sync>;
+
 /// The environment commands depend on, replaceable in tests.
 pub struct Deps {
     /// Finds and inspects agent CLIs.
@@ -33,6 +37,8 @@ pub struct Deps {
     pub start_daemon: Option<StartDaemon>,
     /// The working directory `run` acts on; `None` is the process's.
     pub cwd: Option<PathBuf>,
+    /// Where `mcp ask-user` reads and writes; `None` is the process's stdin/stdout.
+    pub mcp_stdio: Option<McpStdio>,
 }
 
 impl std::fmt::Debug for Deps {
@@ -57,6 +63,7 @@ impl Deps {
             interactive: std::io::stdin().is_terminal(),
             start_daemon: None,
             cwd: None,
+            mcp_stdio: None,
         }
     }
 

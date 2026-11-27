@@ -4,17 +4,18 @@
 //! only on traits and plain values.
 
 use std::collections::{BTreeMap, HashMap};
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use openchef_config::{Config, Paths, Phase};
-use openchef_core::Task;
+use openchef_core::{APPROVAL_TIMEOUT, Task};
 use openchef_engine::service::{Deps, Service};
 use openchef_engine::{Agent, Config as EngineConfig, DynRuntime, Ordered, Runtimes, SpecFor};
-use openchef_runtime::SessionSpec;
 use openchef_runtime::agy::{AgyOptions, AgyRuntime};
 use openchef_runtime::claude::{ClaudeOptions, ClaudeRuntime};
 use openchef_runtime::codex::{CodexOptions, CodexRuntime};
+use openchef_runtime::{McpServer, SessionSpec};
 use openchef_store::Store;
 use time::OffsetDateTime;
 use tokio_util::sync::CancellationToken;
@@ -24,6 +25,9 @@ use crate::env::session_env;
 use crate::notify::desktop_notifier;
 use crate::policy::Policies;
 use crate::{Init, OnStop, Options, STOP_TIMEOUT, Services, service_methods};
+
+/// How much longer than the approval queue an `ask_user` call may take.
+const ASK_USER_GRACE: Duration = Duration::from_mins(1);
 
 /// How long a pool cools down when it ran out of quota without saying until when.
 const UNKNOWN_RESET: Duration = Duration::from_hours(1);
@@ -128,7 +132,11 @@ fn build(cfg: &Config, paths: &Paths, version: &str, store: &Store) -> Result<Se
     });
     let policies = Policies::new(paths)?;
     let queue = LateQueue::default();
+    let exe =
+        std::env::current_exe().map_err(|e| format!("locate the openchef executable: {e}"))?;
     let session = SessionDeps {
+        exe,
+        home: paths.home.clone(),
         env: std::env::vars().collect(),
         pools: cfg.pools.clone(),
         policies: policies.clone(),
@@ -162,6 +170,10 @@ fn build(cfg: &Config, paths: &Paths, version: &str, store: &Store) -> Result<Se
 
 /// What every session spec is built from.
 struct SessionDeps {
+    /// This executable, which serves `ask_user` (`openchef mcp ask-user`).
+    exe: PathBuf,
+    /// The OpenChef home, passed on so the server finds this daemon's socket.
+    home: PathBuf,
     /// The daemon's environment, filtered per pool.
     env: Vec<(String, String)>,
     pools: BTreeMap<String, openchef_config::Pool>,
@@ -192,10 +204,35 @@ impl SessionDeps {
                 task: t.id.clone(),
                 agent: a.name.clone(),
             }),
-            ask_user: None,
+            ask_user: Some(self.ask_user(t, a)),
             log_path: None,
             on_spawn: None,
         })
+    }
+
+    /// The `ask_user` MCP server for one task's agent: this executable's hidden `mcp
+    /// ask-user` command, which forwards questions to the daemon's queue (D-024). The
+    /// tool timeout outlasts the queue's, so the queue, not the CLI, ends a wait.
+    fn ask_user(&self, t: &Task, a: &Agent) -> McpServer {
+        McpServer {
+            name: openchef_api::mcp::SERVER_NAME.to_owned(),
+            command: self.exe.clone(),
+            args: [
+                "mcp",
+                "ask-user",
+                "--task",
+                t.id.as_str(),
+                "--agent",
+                a.name.as_str(),
+            ]
+            .map(str::to_owned)
+            .to_vec(),
+            env: vec![(
+                openchef_config::HOME_ENV.to_owned(),
+                self.home.to_string_lossy().into_owned(),
+            )],
+            tool_timeout: Some(APPROVAL_TIMEOUT + ASK_USER_GRACE),
+        }
     }
 }
 
@@ -306,6 +343,51 @@ mod tests {
         assert_eq!(names, ["c", "a", "b"]);
         assert_eq!(got[1].effort, Some(Effort::High));
         assert_eq!(got[0].runtime, "agy");
+    }
+
+    #[test]
+    fn ask_user_server() {
+        let dir = tempfile::tempdir().unwrap_or_else(|e| panic!("{e}"));
+        let (policies, ws) = crate::policy::tests::test_policies(dir.path(), "");
+        let session = super::SessionDeps {
+            exe: "/bin/openchef".into(),
+            home: dir.path().join("h"),
+            env: Vec::new(),
+            pools: BTreeMap::new(),
+            policies,
+            queue: crate::approver::LateQueue::default(),
+        };
+        let t = crate::policy::tests::test_task(&ws, openchef_core::PermissionMode::AcceptEdits);
+        let a = openchef_engine::Agent {
+            name: "opus".into(),
+            runtime: "claude".into(),
+            model: None,
+            pool: "p".into(),
+            effort: None,
+        };
+        let spec = session.spec(&t, &a).unwrap_or_else(|e| panic!("{e}"));
+        let m = spec
+            .ask_user
+            .unwrap_or_else(|| panic!("no ask_user server"));
+        assert_eq!(m.name, "openchef");
+        assert_eq!(m.command, std::path::Path::new("/bin/openchef"));
+        assert_eq!(
+            m.args,
+            [
+                "mcp",
+                "ask-user",
+                "--task",
+                t.id.as_str(),
+                "--agent",
+                "opus"
+            ]
+        );
+        assert_eq!(m.env[0].0, openchef_config::HOME_ENV);
+        assert!(
+            m.tool_timeout > Some(openchef_core::APPROVAL_TIMEOUT),
+            "the queue, not the CLI, ends a wait"
+        );
+        assert_eq!(spec.mode, openchef_core::PermissionMode::AcceptEdits);
     }
 
     #[test]

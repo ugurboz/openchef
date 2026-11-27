@@ -83,6 +83,7 @@ fn fake_env(installed: &[&'static str], logged_in: &[&'static str]) -> Env {
             interactive: false,
             start_daemon: None,
             cwd: None,
+            mcp_stdio: None,
         },
         paths,
         _dir: dir,
