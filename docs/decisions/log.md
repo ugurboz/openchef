@@ -724,3 +724,52 @@ where they name Go packages or types, read the matching crate (`internal/<x>` �
   `TestPinnedAgentIsAdmittedNotChosen`, `TestWeightedSharesAndEffort` and
   `TestQuotaCommand`. `openchef doctor` does not show a running daemon's probes yet
   (#43).
+
+## D-036 — The sandbox as a spec rewrite: one hook, parameters not text, fail closed
+*2026-11-28 · R4.5, R4.6, R4.8 · implements D-028, D-032*
+
+- **Context:** §21.3 and the S1/S2 spikes fixed the policy and the mechanisms
+  (Seatbelt; Landlock + seccomp through a self-confining helper). Nothing in Go exists
+  to port; the design is new.
+- **Options for where confinement happens:** (a) each adapter and the verification
+  runner build their own wrapper; (b) one `procs::Confine` function that rewrites a
+  process `Spec` before it starts, carried by `SessionSpec.confine` and
+  `verify::Spec.confine`, built by the daemon per task; (c) confinement inside
+  `openchef-procs` itself.
+- **Challenge:** (a) copies policy decisions into three adapters. (c) makes the process
+  crate know policies and agent CLIs. (b) keeps the sandbox crate ignorant of runtimes,
+  the adapters ignorant of policies, and procs unchanged: process-tree control still
+  happens on the wrapper process, which is the confined process on macOS (`sandbox-exec`
+  execs) and on Linux (the helper execs).
+- **Decision:** (b).
+  - *Policy:* writable = worktree, a per-task temp dir, the repository's cache
+    (`~/.openchef/sandbox/cache/<repo-id>`), the worktree's git admin directory, the
+    agent CLI's state (S1 table); readable additions under home = toolchains, git
+    configuration, the repository's git common directory (without it git cannot work in
+    a worktree of a repository under home, which the spikes, run under `/tmp`, missed);
+    private = OpenChef's own files, denied last.
+  - *macOS:* the profile text contains only parameter names; every path is a `-D`
+    parameter, so no path can change the profile. File *metadata* stays readable under
+    home (`file-read-metadata`): git resolves every directory above the repository's
+    common dir and fails without it (found by the daemon's kernel test, not by S1, whose
+    repository sat directly in `/tmp`). Contents and listings stay denied; Landlock never
+    restricted metadata, so the platforms agree.
+  - *Linux:* Landlock cannot carve a denied path out of a granted one, so a policy that
+    grants a parent of a private path is refused; `NotEnforced` refuses; seccomp denies
+    the S2 list. The helper is `openchef __sandbox`, dispatched before argument parsing.
+  - *Fail closed everywhere:* `run --sandbox` is refused when the platform check fails;
+    a sandboxed task's verification never runs unconfined (no `confine_verify` → error);
+    an unknown runtime cannot run sandboxed; Windows returns `Unsupported` (R4.7).
+  - *Codex* runs `danger-full-access` inside our sandbox (amends D-003 for sandboxed
+    sessions); agy is unchanged and its own sandbox is not counted (amends D-015).
+- **Known limit:** the sandbox confines files, not the daemon's socket: a confined agent
+  can still call the daemon API, as an unconfined one can through the CLI (#45).
+- **Consequences:** `doctor` shows whether the sandbox applies; kernel tests on macOS
+  and Linux check that a confined command cannot read a home secret, write outside, or
+  read OpenChef's state. A live, logged-in Claude Code 2.1.326 turn under the generated
+  profile (`tests/live.rs`, `OPENCHEF_LIVE=1`), in a worktree of a repository under the
+  home directory, wrote its worktree and was refused the secret; it also showed that
+  Claude now names its cwd file `claude-<hex>-cwd` (S1 saw decimal), which the profile
+  now allows. A live Codex 0.172.0 turn (`exec --sandbox danger-full-access`) behaved the
+  same. agy, the Codex app-server transport, and every live turn on Linux are still to
+  be run.
