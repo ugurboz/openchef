@@ -5,6 +5,7 @@
 
 mod approvals;
 mod client;
+pub mod mcp;
 mod tasks;
 pub mod transport;
 
@@ -98,6 +99,9 @@ pub enum Error {
         #[source]
         source: std::io::Error,
     },
+    /// The MCP server's input failed.
+    #[error("api: mcp: {0}")]
+    Mcp(String),
     /// This platform has no daemon socket yet (Windows: R3.3).
     #[error("api: the daemon socket is not available on this platform yet")]
     Unsupported,
