@@ -57,7 +57,7 @@ Exit: every `testdata/` replay passes; one turn + resume live on each runtime.
 |---|---|---|---|
 | R3.1 | `openchef-gitws`: worktrees, commits, patches, reset | Elif | `internal/gitws` |
 | R3.2 | `openchef-api` + `openchef-daemon`: lock, socket, start/stop/status | Lead | `internal/api`, `internal/daemon` |
-| R3.3 | Daemon socket on Windows (AF_UNIX + ACL) | İbo | `internal/daemon` (Windows parts) |
+| [R3.3](tasks/R3.3-daemon-socket-windows.md) | Daemon socket on Windows (AF_UNIX + ACL) | İbo | `internal/daemon` (Windows parts) |
 | R3.4 | Verification runner | Uğur | `internal/verify` (on `go-reference`) |
 | R3.5 | Engine: step loop, retries, failover, recovery | Lead | `internal/engine` |
 | R3.6 | Service + CLI `run`/`status`/`logs -f`/`cancel`/`retry`, live renderer, kill-the-daemon e2e | Lead + Uğur (CLI renderer) | `internal/service`, `internal/cli`, `internal/e2e` |
