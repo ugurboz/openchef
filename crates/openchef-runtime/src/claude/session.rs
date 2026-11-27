@@ -777,6 +777,20 @@ impl Actor {
                 result = Err(start_error("process output did not close".to_owned()));
             }
         }
+        // Output closing is not the process being gone: wait until every generation is
+        // reaped, so nothing of this session outlives close.
+        let processes: Vec<Arc<Process>> = self
+            .generations
+            .values()
+            .filter_map(|g| g.process.clone())
+            .collect();
+        for p in processes {
+            if tokio::time::timeout(close_wait, p.wait()).await.is_err()
+                && let Err(e) = p.terminate(Duration::ZERO, &CancellationToken::new()).await
+            {
+                result = result.and(Err(start_error(format!("kill: {e}"))));
+            }
+        }
         self.end_turn(EventBody::TurnFailed(Failure::new(
             FailureKind::Interrupted,
             "session closed",
