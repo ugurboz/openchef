@@ -15,12 +15,18 @@ test = false
 doc = false
 
 [dependencies]
+openchef-core.workspace = true
+openchef-gitws.workspace = true
 openchef-procs.workspace = true
+openchef-runtime.workspace = true
+openchef-store.workspace = true
 thiserror.workspace = true
+time.workspace = true
 tokio = { workspace = true, features = ["rt", "sync", "time", "macros"] }
 tokio-util.workspace = true
 
 [dev-dependencies]
+openchef-fake.workspace = true
 tempfile.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time"] }
 

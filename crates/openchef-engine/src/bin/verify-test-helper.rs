@@ -32,6 +32,16 @@ fn main() -> ExitCode {
             writeln!(out, "END").unwrap();
             ExitCode::from(1)
         }
+        "check" => {
+            // The engine tests' verify command: passes when the file exists.
+            if std::path::Path::new(arg).exists() {
+                println!("found {arg}");
+                ExitCode::SUCCESS
+            } else {
+                println!("missing {arg}");
+                ExitCode::from(1)
+            }
+        }
         "stderr" => {
             eprintln!("on stderr");
             ExitCode::from(1)
