@@ -10,7 +10,7 @@ use crate::Error;
 pub const HOME_ENV: &str = "OPENCHEF_HOME";
 
 /// OpenChef's file locations. All paths are absolute.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct Paths {
     /// The OpenChef home.
     pub home: PathBuf,
