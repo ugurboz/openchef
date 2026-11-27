@@ -11,6 +11,7 @@ publish = false
 [dependencies]
 openchef-core.workspace = true
 openchef-engine.workspace = true
+openchef-quota.workspace = true
 openchef-runtime.workspace = true
 serde.workspace = true
 serde_json.workspace = true
