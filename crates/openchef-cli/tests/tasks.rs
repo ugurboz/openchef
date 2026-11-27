@@ -158,6 +158,8 @@ fn start_daemon(paths: &Paths, claude: &FakeRuntime) -> Running {
                         event_dir: init_paths.sessions.clone(),
                         default_permissions: None,
                         on_fail: None,
+                        approval_timeout: None,
+                        notify: None,
                     })
                     .map_err(|e| e.to_string())?;
                     let _killed = service.start().await.map_err(|e| e.to_string())?;

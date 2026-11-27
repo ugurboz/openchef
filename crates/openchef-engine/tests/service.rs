@@ -12,9 +12,11 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use openchef_core::{PermissionMode, Task, TaskId, TaskStatus};
+use openchef_core::{
+    Approval, ApprovalKind, ApprovalStatus, DecidedBy, PermissionMode, Task, TaskId, TaskStatus,
+};
 use openchef_engine::service::{
-    Deps, Error, EventLog, RunRequest, SUBSCRIBER_BUFFER, Service, title,
+    AskRequest, Deps, Error, EventLog, RunRequest, SUBSCRIBER_BUFFER, Service, title,
 };
 use openchef_engine::{Agent, Config, DynRuntime, Event, EventKind, Ordered, Runtimes, Sink};
 use openchef_fake::{FakeRuntime, Turn};
@@ -22,7 +24,7 @@ use openchef_runtime::{
     ApprovalRequest, Approver, ApproverError, BoxFuture, Decision, Failure, FailureKind, Question,
     SessionSpec,
 };
-use openchef_store::Store;
+use openchef_store::{ApprovalFilter, Store};
 use time::OffsetDateTime;
 use tokio_util::sync::CancellationToken;
 
@@ -96,6 +98,11 @@ impl Env {
         &self,
         default_permissions: Option<openchef_engine::service::DefaultPermissions>,
     ) -> Service {
+        self.service_deps(|d| d.default_permissions = default_permissions)
+    }
+
+    /// A service whose deps `tweak` adjusts.
+    fn service_deps(&self, tweak: impl FnOnce(&mut Deps)) -> Service {
         let mut runtimes: Runtimes = HashMap::new();
         runtimes.insert(
             "claude".into(),
@@ -148,13 +155,16 @@ impl Env {
             self.dir.path(),
         );
         cfg.sleep = Some(Arc::new(|_| Box::pin(async {})));
-        Service::new(Deps {
+        let mut deps = Deps {
             engine: cfg,
             event_dir: self.dir.path().join("sessions"),
-            default_permissions,
+            default_permissions: None,
             on_fail: None,
-        })
-        .unwrap()
+            approval_timeout: None,
+            notify: None,
+        };
+        tweak(&mut deps);
+        Service::new(deps).unwrap()
     }
 
     fn service(&self) -> Service {
@@ -191,7 +201,7 @@ async fn stop(s: &Service) {
     s.stop(Duration::from_secs(10)).await.unwrap();
 }
 
-async fn wait_for(cond: impl AsyncFn() -> bool) {
+async fn wait_for(mut cond: impl AsyncFnMut() -> bool) {
     let deadline = Instant::now() + Duration::from_secs(10);
     while !cond().await {
         assert!(Instant::now() < deadline, "condition not met in time");
@@ -488,4 +498,231 @@ async fn subscribe_replay_and_live_exactly_once() {
     for (i, step) in seen.iter().enumerate() {
         assert_eq!(*step as usize, i, "missed or duplicated");
     }
+}
+
+// --- approvals (approvals_test.go) --------------------------------------------------
+
+/// Starts a task whose agent hangs, so requests can be queued for it.
+async fn running_task(e: &Env, s: &Service) -> TaskId {
+    e.claude.push([Turn {
+        hang: true,
+        ..Turn::default()
+    }]);
+    let t = s.run(e.run("p")).await.unwrap();
+    wait_for(async || e.claude.turns().len() == 1).await;
+    t.id
+}
+
+fn request(task: &TaskId, kind: ApprovalKind, tool: Option<&str>, summary: &str) -> AskRequest {
+    AskRequest {
+        task: task.clone(),
+        agent: "opus".into(),
+        kind,
+        tool: tool.map(str::to_owned),
+        summary: summary.into(),
+        options: Vec::new(),
+        raw: None,
+    }
+}
+
+type Asked = tokio::task::JoinHandle<Result<Approval, Error>>;
+
+fn ask(s: &Service, req: AskRequest, cancel: CancellationToken) -> Asked {
+    let s = s.clone();
+    tokio::spawn(async move { s.ask(req, &cancel).await })
+}
+
+async fn pending_one(s: &Service, id: &TaskId) -> Approval {
+    let filter = ApprovalFilter {
+        task: Some(id.clone()),
+        pending: true,
+        limit: None,
+    };
+    let mut got = Vec::new();
+    wait_for(async || {
+        got = s.approvals(filter.clone()).await.unwrap();
+        got.len() == 1
+    })
+    .await;
+    got.remove(0)
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn ask_and_decide() {
+    let e = env().await;
+    let notes = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+    let s = {
+        let notes = Arc::clone(&notes);
+        e.service_deps(move |d| {
+            d.notify = Some(Arc::new(move |_: &str, body: &str| {
+                notes.lock().unwrap().push(body.to_owned())
+            }));
+        })
+    };
+    let id = running_task(&e, &s).await;
+    let (_, mut sub) = s.watch(&id, false).await.unwrap();
+
+    let res = ask(
+        &s,
+        request(
+            &id,
+            ApprovalKind::Command,
+            Some("Bash"),
+            "go test ./...\nrm -rf build",
+        ),
+        CancellationToken::new(),
+    );
+    let p = pending_one(&s, &id).await;
+    assert_eq!(
+        p.summary, "go test ./...\nrm -rf build",
+        "people approve exactly what runs"
+    );
+    let wrong = s
+        .decide(p.id, ApprovalStatus::Answered, Some("x".into()))
+        .await;
+    assert!(
+        matches!(wrong, Err(Error::Invalid(_))),
+        "answering a command: {wrong:?}"
+    );
+    s.decide(p.id, ApprovalStatus::Allowed, None).await.unwrap();
+    let got = res.await.unwrap().unwrap();
+    assert_eq!(got.status, ApprovalStatus::Allowed);
+    assert_eq!(got.decided_by, Some(DecidedBy::User));
+    let second = s.decide(p.id, ApprovalStatus::Denied, None).await;
+    assert!(
+        matches!(
+            second,
+            Err(Error::Settled {
+                status: ApprovalStatus::Allowed,
+                ..
+            })
+        ),
+        "{second:?}"
+    );
+    // The viewer saw the request and its decision; it was watched, so no notification.
+    let mut kinds = Vec::new();
+    while kinds.len() < 2 {
+        let ev = tokio::time::timeout(Duration::from_secs(10), sub.rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        if ev.approval.is_some() {
+            kinds.push(ev.kind);
+        }
+    }
+    assert_eq!(
+        kinds,
+        [EventKind::ApprovalRequested, EventKind::ApprovalDecided]
+    );
+    s.unwatch(&sub);
+
+    // Unwatched: a question notifies the desktop.
+    let mut q = request(&id, ApprovalKind::Question, None, "Which port?");
+    q.options = vec!["8080".into()];
+    let res = ask(&s, q, CancellationToken::new());
+    let p = pending_one(&s, &id).await;
+    s.decide(p.id, ApprovalStatus::Answered, Some("9090".into()))
+        .await
+        .unwrap();
+    assert_eq!(res.await.unwrap().unwrap().answer.as_deref(), Some("9090"));
+    assert_eq!(
+        notes.lock().unwrap().len(),
+        1,
+        "{:?}",
+        notes.lock().unwrap()
+    );
+    stop(&s).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn ask_times_out() {
+    let e = env().await;
+    let s = e.service_deps(|d| d.approval_timeout = Some(Duration::from_millis(50)));
+    let id = running_task(&e, &s).await;
+    let a = s
+        .ask(
+            request(&id, ApprovalKind::Command, Some("Bash"), "make"),
+            &CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(a.status, ApprovalStatus::Expired);
+    assert_eq!(a.decided_by, Some(DecidedBy::Timeout));
+    stop(&s).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn ask_withdrawn_when_agent_stops() {
+    let e = env().await;
+    let s = e.service();
+    let id = running_task(&e, &s).await;
+    let cancel = CancellationToken::new();
+    let res = ask(
+        &s,
+        request(
+            &id,
+            ApprovalKind::Tool,
+            Some("WebFetch"),
+            "https://example.com",
+        ),
+        cancel.clone(),
+    );
+    let p = pending_one(&s, &id).await;
+    cancel.cancel();
+    let r = res.await.unwrap();
+    assert!(matches!(r, Err(Error::Withdrawn(n)) if n == p.id), "{r:?}");
+    assert_eq!(
+        e.store.approval(p.id).await.unwrap().status,
+        ApprovalStatus::Withdrawn
+    );
+    stop(&s).await;
+}
+
+/// A request still pending when the daemon dies stays listed, settled as expired by the
+/// next daemon, which tells the task's viewers.
+#[tokio::test(flavor = "multi_thread")]
+async fn restart_expires_pending_requests() {
+    let e = env().await;
+    let first = e.service();
+    let id = running_task(&e, &first).await;
+    let res = ask(
+        &first,
+        request(&id, ApprovalKind::Command, Some("Bash"), "make"),
+        CancellationToken::new(),
+    );
+    let p = pending_one(&first, &id).await;
+    stop(&first).await;
+    let r = res.await.unwrap();
+    assert!(
+        matches!(r, Err(Error::Stopping)),
+        "ask across shutdown: {r:?}"
+    );
+    assert_eq!(
+        e.store.approval(p.id).await.unwrap().status,
+        ApprovalStatus::Pending,
+        "shutdown settled the request"
+    );
+
+    e.claude.push([Turn::editing("", write_file)]);
+    let second = e.service();
+    let _killed = second.start().await.unwrap();
+    let got = second
+        .approvals(ApprovalFilter {
+            task: Some(id.clone()),
+            pending: false,
+            limit: None,
+        })
+        .await
+        .unwrap();
+    assert_eq!(got.len(), 1);
+    assert_eq!(got[0].status, ApprovalStatus::Expired);
+    assert_eq!(got[0].decided_by, Some(DecidedBy::Daemon));
+    let (past, sub) = second.watch(&id, true).await.unwrap();
+    second.unwatch(&sub);
+    assert!(
+        past.iter().any(|ev| ev.kind == EventKind::ApprovalDecided
+            && ev.approval.as_ref().is_some_and(|a| a.id == p.id)),
+        "the expiry was not logged"
+    );
+    stop(&second).await;
 }

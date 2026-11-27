@@ -144,6 +144,8 @@ fn build(cfg: &Config, paths: &Paths, version: &str, store: &Store) -> Result<Se
             // The daemon log is best effort.
             let _logged = writeln!(std::io::stderr(), "event log: {message}");
         })),
+        approval_timeout: None,
+        notify: None,
     })
     .map_err(|e| e.to_string())
 }

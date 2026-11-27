@@ -1,7 +1,7 @@
 //! What the engine reports while it works, streamed live to `run`, `logs -f` and
 //! `status` (D-014).
 
-use openchef_core::TaskId;
+use openchef_core::{Approval, TaskId};
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 
@@ -29,6 +29,10 @@ pub enum EventKind {
     StepFinished,
     /// `message`: retries, backoff, failover, nudges.
     Notice,
+    /// `agent`, `approval`: a request or question waits for the user (§9.2).
+    ApprovalRequested,
+    /// `agent`, `approval`: a request was settled.
+    ApprovalDecided,
 }
 
 impl EventKind {
@@ -45,6 +49,8 @@ impl EventKind {
             Self::AttemptEnded => "attempt_ended",
             Self::StepFinished => "step_finished",
             Self::Notice => "notice",
+            Self::ApprovalRequested => "approval_requested",
+            Self::ApprovalDecided => "approval_decided",
         }
     }
 }
@@ -80,6 +86,9 @@ pub struct Event {
     /// A verification outcome.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub verify: Option<Outcome>,
+    /// An approval request.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub approval: Option<Approval>,
 }
 
 impl Event {
@@ -97,6 +106,7 @@ impl Event {
             message: None,
             runtime: None,
             verify: None,
+            approval: None,
         }
     }
 }

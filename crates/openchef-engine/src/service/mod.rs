@@ -4,6 +4,7 @@
 //! quota resets. The daemon's API handlers and the TUI call it; it knows nothing about
 //! sockets or terminals.
 
+mod approvals;
 mod events;
 
 use std::collections::HashMap;
@@ -11,11 +12,12 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
+pub use approvals::{AskRequest, Notify};
 pub use events::{EventLog, OnFail, SUBSCRIBER_BUFFER, Subscription};
 use openchef_core::StateMachine as _;
 use openchef_core::{
-    Attempt, Backend, Importance, Kind, Mode, PermissionMode, Step, StepStatus, Task, TaskId,
-    TaskStatus,
+    Approval, Attempt, Backend, Importance, Kind, Mode, PermissionMode, Step, StepStatus, Task,
+    TaskId, TaskStatus,
 };
 use openchef_gitws::Repo;
 use openchef_store::{Store, TaskChange, TaskFilter};
@@ -47,6 +49,21 @@ pub enum Error {
     /// `stop` returned while engine runs were still stopping.
     #[error("service: engine runs did not stop in time")]
     StopTimeout,
+    /// A request was already settled (by the user, a timeout or the daemon) when
+    /// another decision arrived.
+    #[error("request {id} was already {status}")]
+    Settled {
+        /// The request.
+        id: i64,
+        /// How it was settled.
+        status: openchef_core::ApprovalStatus,
+    },
+    /// The agent stopped waiting; the request was withdrawn.
+    #[error("service: request {0} withdrawn")]
+    Withdrawn(i64),
+    /// The service is stopping; the request stays pending for the next start to expire.
+    #[error("service: stopping")]
+    Stopping,
 }
 
 /// What the service needs.
@@ -59,6 +76,10 @@ pub struct Deps {
     pub default_permissions: Option<DefaultPermissions>,
     /// Operational problems (event log writes); `None` drops them.
     pub on_fail: Option<OnFail>,
+    /// How long a request waits for the user; `None` is `APPROVAL_TIMEOUT` (§9.2).
+    pub approval_timeout: Option<Duration>,
+    /// Tells the user a request waits while nobody watches its task.
+    pub notify: Option<Notify>,
 }
 
 impl std::fmt::Debug for Deps {
@@ -109,6 +130,8 @@ struct State {
     timers: HashMap<TaskId, (u64, CancellationToken)>,
     next_timer: u64,
     stopped: bool,
+    /// Who waits for which approval request; a decision is sent once.
+    waiting: HashMap<i64, tokio::sync::oneshot::Sender<Approval>>,
 }
 
 struct Inner {
@@ -117,6 +140,10 @@ struct Inner {
     events: Arc<EventLog>,
     now: Option<Clock>,
     default_permissions: Option<DefaultPermissions>,
+    approval_timeout: Duration,
+    notify: Option<Notify>,
+    /// Fires when the service stops.
+    life: CancellationToken,
     tracker: TaskTracker,
     /// A small leaf value, never held across `.await` (D-030).
     state: Mutex<State>,
@@ -166,6 +193,11 @@ impl Service {
                 events,
                 now,
                 default_permissions: deps.default_permissions,
+                approval_timeout: deps
+                    .approval_timeout
+                    .unwrap_or(openchef_core::APPROVAL_TIMEOUT),
+                notify: deps.notify,
+                life: CancellationToken::new(),
                 tracker: TaskTracker::new(),
                 state: Mutex::new(State::default()),
             }),
@@ -180,6 +212,7 @@ impl Service {
     ///
     /// When the store cannot be read.
     pub async fn start(&self) -> Result<usize, Error> {
+        self.expire_stale().await?;
         let killed = self.inner.engine.kill_leftovers().await.unwrap_or(0);
         let active = self
             .inner
@@ -214,6 +247,7 @@ impl Service {
     ///
     /// [`Error::StopTimeout`] when runs were still stopping.
     pub async fn stop(&self, timeout: Duration) -> Result<(), Error> {
+        self.inner.life.cancel();
         {
             let mut st = self.inner.state();
             st.stopped = true;

@@ -244,6 +244,8 @@ async fn services(paths: Paths, runtime: ProcRuntime) -> Result<Services, String
         event_dir: paths.sessions.clone(),
         default_permissions: None,
         on_fail: None,
+        approval_timeout: None,
+        notify: None,
     })
     .map_err(|e| e.to_string())?;
     let killed = service.start().await.map_err(|e| e.to_string())?;
