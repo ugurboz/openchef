@@ -8,5 +8,24 @@ license.workspace = true
 repository.workspace = true
 publish = false
 
+[[bin]]
+name = "daemon-test-helper"
+path = "src/bin/daemon-test-helper.rs"
+test = false
+doc = false
+
+[dependencies]
+openchef-api.workspace = true
+openchef-config.workspace = true
+openchef-runtime.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+time.workspace = true
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros", "net", "time", "sync"] }
+tokio-util.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
 [lints]
 workspace = true
