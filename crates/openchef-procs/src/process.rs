@@ -4,7 +4,7 @@ use std::ffi::OsString;
 use std::fs::File;
 use std::io::{self, Write as _};
 use std::path::PathBuf;
-use std::process::{ChildStdin, ChildStdout, Command, ExitStatus, Stdio};
+use std::process::{ChildStderr, ChildStdin, ChildStdout, Command, ExitStatus, Stdio};
 use std::sync::{Arc, PoisonError, RwLock, mpsc as std_mpsc};
 use std::thread;
 use std::time::Duration;
@@ -42,6 +42,8 @@ pub enum Stderr {
     Inherit,
     /// Appended to this file (e.g. the session's `stderr.log`).
     File(File),
+    /// A pipe the caller reads with [`Process::take_stderr`].
+    Piped,
 }
 
 /// Describes a process to start.
@@ -144,6 +146,16 @@ impl StdinWriter {
             })
     }
 
+    /// Queues `data` without waiting for the write; writes keep their order. Fails only
+    /// when stdin is already closed. Use it where waiting is not possible (an actor's
+    /// message loop); a failed write shows up as the process going away.
+    pub fn queue(&self, data: Vec<u8>) -> Result<(), Error> {
+        let (reply, _ignored) = oneshot::channel();
+        self.tx
+            .send(StdinMsg::Write(data, reply))
+            .map_err(|_| Error::StdinClosed { pid: self.pid })
+    }
+
     /// Closes stdin after the writes already queued; the child sees EOF.
     pub fn close(&self) {
         // A send error means the writer thread already ended and stdin is closed.
@@ -162,6 +174,7 @@ pub struct Process {
     exit: watch::Receiver<Option<Exit>>,
     stdin: StdinWriter,
     stdout: Option<ChildStdout>,
+    stderr: Option<ChildStderr>,
 }
 
 impl std::fmt::Debug for Process {
@@ -178,6 +191,7 @@ struct Started {
     token: u64,
     stdin: ChildStdin,
     stdout: ChildStdout,
+    stderr: Option<ChildStderr>,
 }
 
 impl Process {
@@ -216,6 +230,7 @@ impl Process {
             exit: exit_rx,
             stdin,
             stdout: Some(started.stdout),
+            stderr: started.stderr,
         })
     }
 
@@ -235,6 +250,12 @@ impl Process {
     /// a dedicated thread) and drops it when done.
     pub fn take_stdout(&mut self) -> Option<ChildStdout> {
         self.stdout.take()
+    }
+
+    /// Takes the child's stderr when the spec asked for [`Stderr::Piped`]. Like stdout,
+    /// it is a blocking pipe the caller drains on its own thread.
+    pub fn take_stderr(&mut self) -> Option<ChildStderr> {
+        self.stderr.take()
     }
 
     /// How the process ended, if it has been reaped.
@@ -347,6 +368,7 @@ fn supervise(
             Stderr::Discard => Stdio::null(),
             Stderr::Inherit => Stdio::inherit(),
             Stderr::File(file) => Stdio::from(file),
+            Stderr::Piped => Stdio::piped(),
         });
     if let Some(dir) = &spec.dir {
         let _ = cmd.current_dir(dir);
@@ -389,6 +411,7 @@ fn supervise(
             return;
         }
     };
+    let stderr = child.stderr.take();
     report(
         ready,
         Ok(Started {
@@ -396,6 +419,7 @@ fn supervise(
             token,
             stdin,
             stdout,
+            stderr,
         }),
     );
 

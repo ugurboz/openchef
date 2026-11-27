@@ -552,7 +552,10 @@ fn canonical_id(id: &Value) -> String {
 }
 
 /// Reads one line without its `\n`/`\r\n`; `None` at EOF; an error past `max` bytes.
-fn read_line(reader: &mut impl std::io::BufRead, max: usize) -> io::Result<Option<Vec<u8>>> {
+pub(crate) fn read_line(
+    reader: &mut impl std::io::BufRead,
+    max: usize,
+) -> io::Result<Option<Vec<u8>>> {
     let mut line = Vec::new();
     loop {
         let available = reader.fill_buf()?;
