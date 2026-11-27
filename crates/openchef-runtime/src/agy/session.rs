@@ -98,6 +98,8 @@ pub(crate) struct Generation {
     peer: Peer,
     process: Option<Arc<Process>>,
     stderr: Arc<Mutex<String>>,
+    /// Fires when stderr reached EOF, so a crash report has the CLI's last words.
+    stderr_done: CancellationToken,
     /// `session/load` is replaying history: the forwarder drops updates (D-016).
     loading: Arc<AtomicBool>,
     killed: bool,
@@ -278,9 +280,18 @@ fn permission_handler(generation: u64, tx: mpsc::UnboundedSender<Internal>) -> H
     })
 }
 
-fn copy_stderr(pipe: Option<std::process::ChildStderr>, log: &RawLog, tail: Arc<Mutex<String>>) {
-    let Some(pipe) = pipe else { return };
+fn copy_stderr(
+    pipe: Option<std::process::ChildStderr>,
+    log: &RawLog,
+    tail: Arc<Mutex<String>>,
+) -> CancellationToken {
+    let done = CancellationToken::new();
+    let Some(pipe) = pipe else {
+        done.cancel();
+        return done;
+    };
     let writer = log.clone();
+    let finished = done.clone();
     let spawned = thread::Builder::new()
         .name("openchef-agy-stderr".to_owned())
         .spawn(move || {
@@ -296,10 +307,13 @@ fn copy_stderr(pipe: Option<std::process::ChildStderr>, log: &RawLog, tail: Arc<
                     t.drain(..cut);
                 }
             }
+            finished.cancel();
         });
     if let Err(e) = spawned {
         log.note(Dir::Note, &format!("agy: cannot read stderr: {e}"));
+        done.cancel();
     }
+    done
 }
 
 async fn call<R: serde::de::DeserializeOwned>(
@@ -383,7 +397,7 @@ impl Actor {
             return Err(e);
         }
         let tail = Arc::new(Mutex::new(String::new()));
-        copy_stderr(process.take_stderr(), &self.log, Arc::clone(&tail));
+        let stderr_done = copy_stderr(process.take_stderr(), &self.log, Arc::clone(&tail));
         let Some(stdout) = process.take_stdout() else {
             drop(process.close().await);
             return Err(start_error("agy has no stdout"));
@@ -413,6 +427,7 @@ impl Actor {
                 peer: peer.clone(),
                 process: Some(Arc::new(process)),
                 stderr: Arc::clone(&tail),
+                stderr_done,
                 loading,
                 killed: false,
                 routed: false,
@@ -738,9 +753,10 @@ impl Actor {
         let Some(g) = self.generations.get(&generation) else {
             return;
         };
-        let (peer, process, internal, life, log) = (
+        let (peer, process, stderr_done, internal, life, log) = (
             g.peer.clone(),
             g.process.clone(),
+            g.stderr_done.clone(),
             self.internal_tx.clone(),
             self.life.clone(),
             self.log.clone(),
@@ -760,10 +776,14 @@ impl Actor {
                 Ok(r) => Prompted::Answered(r),
                 Err(e) => {
                     let closed = matches!(e, linerpc::Error::Closed { .. });
-                    if closed && let Some(p) = process {
-                        // stdout can end before stderr is fully copied; once the process
-                        // is reaped, the copy is complete.
-                        let _reaped = tokio::time::timeout(EXIT_WAIT, p.wait()).await;
+                    if closed {
+                        // stdout can end before stderr is fully copied: wait for the
+                        // process to be reaped and for stderr to reach EOF.
+                        if let Some(p) = process {
+                            let _reaped = tokio::time::timeout(EXIT_WAIT, p.wait()).await;
+                        }
+                        let _copied =
+                            tokio::time::timeout(EXIT_WAIT, stderr_done.cancelled()).await;
                     }
                     Prompted::Failed {
                         message: format!("session/prompt: {e}"),
@@ -1119,6 +1139,7 @@ impl Actor {
                 peer,
                 process: None,
                 stderr: Arc::new(Mutex::new(String::new())),
+                stderr_done: CancellationToken::new(),
                 loading: Arc::new(AtomicBool::new(false)),
                 killed: false,
                 routed: false,
