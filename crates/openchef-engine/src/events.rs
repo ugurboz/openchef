@@ -2,12 +2,14 @@
 //! `status` (D-014).
 
 use openchef_core::TaskId;
+use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 
 use crate::verify::Outcome;
 
 /// What happened.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum EventKind {
     /// `status`, `message` (the reason).
     TaskStatus,
@@ -48,32 +50,42 @@ impl EventKind {
 }
 
 /// One observable thing the engine did. Only the fields listed for its kind are set.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Event {
     /// The task.
     pub task: TaskId,
     /// When.
+    #[serde(with = "time::serde::rfc3339")]
     pub at: OffsetDateTime,
     /// What.
     pub kind: EventKind,
     /// The step, from 1.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub step: Option<u32>,
     /// The attempt id.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub attempt: Option<i64>,
     /// The agent's name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent: Option<String>,
     /// A status, as text.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub status: Option<String>,
     /// A human-readable message.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
     /// A normalized runtime event.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub runtime: Option<openchef_runtime::Event>,
     /// A verification outcome.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub verify: Option<Outcome>,
 }
 
 impl Event {
-    pub(crate) fn new(task: &TaskId, at: OffsetDateTime, kind: EventKind) -> Self {
+    /// An event with only its kind set.
+    #[must_use]
+    pub fn new(task: &TaskId, at: OffsetDateTime, kind: EventKind) -> Self {
         Self {
             task: task.clone(),
             at,

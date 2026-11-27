@@ -20,10 +20,12 @@ openchef-gitws.workspace = true
 openchef-procs.workspace = true
 openchef-runtime.workspace = true
 openchef-store.workspace = true
+serde.workspace = true
+serde_json.workspace = true
 thiserror.workspace = true
 time.workspace = true
 tokio = { workspace = true, features = ["rt", "sync", "time", "macros"] }
-tokio-util.workspace = true
+tokio-util = { workspace = true, features = ["rt"] }
 
 [dev-dependencies]
 openchef-fake.workspace = true

@@ -10,6 +10,7 @@ mod prompts;
 mod recover;
 mod router;
 mod runtimes;
+pub mod service;
 mod session;
 mod step;
 mod turn;
