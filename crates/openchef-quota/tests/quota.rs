@@ -15,9 +15,9 @@ use std::sync::atomic::{AtomicU16, Ordering};
 use std::time::Duration;
 
 use openchef_quota::{
-    BoxFuture, ClaudeCredentials, Credentials, Error, Fetcher, Health, Observation, Prober,
-    Source, State, Tracker, Window, codex_credentials, from_signal, health_of, parse_chatgpt,
-    parse_claude, reset_at,
+    BoxFuture, ClaudeCredentials, Credentials, Error, Fetcher, Health, Observation, Prober, Source,
+    State, Tracker, Window, codex_credentials, from_signal, health_of, parse_chatgpt, parse_claude,
+    reset_at,
 };
 use openchef_runtime::{QuotaSignal, QuotaWindow};
 use time::OffsetDateTime;
@@ -52,14 +52,14 @@ fn obs(at: OffsetDateTime, source: Source, windows: Vec<Window>) -> Observation 
 fn merge_within_and_across_windows() {
     let mut tr = Tracker::new();
     let reset = T0 + 3 * HOUR;
-    tr.observe(obs(
+    tr.observe(&obs(
         T0,
         Source::Stream,
         vec![window("five_hour", 0.50, Some(reset))],
     ));
     // A later but lower reading of the same window (another source, rounding) does not
     // lower utilization; the reset differs by seconds only.
-    tr.observe(obs(
+    tr.observe(&obs(
         T0 + MINUTE,
         Source::Probe,
         vec![window(
@@ -74,7 +74,7 @@ fn merge_within_and_across_windows() {
         "same window: {s:?}"
     );
     // A later reset is a new window: it replaces the old one.
-    tr.observe(obs(
+    tr.observe(&obs(
         T0 + 2 * MINUTE,
         Source::Stream,
         vec![window("five_hour", 0.05, Some(reset + 5 * HOUR))],
@@ -82,13 +82,16 @@ fn merge_within_and_across_windows() {
     let s = tr.state("claude-max", T0).unwrap();
     assert_eq!(s.windows[0].utilization, 0.05, "new window: {s:?}");
     // A stale observation of the replaced window is ignored.
-    tr.observe(obs(
+    tr.observe(&obs(
         T0 + 3 * MINUTE,
         Source::Probe,
         vec![window("five_hour", 0.90, Some(reset))],
     ));
     let s = tr.state("claude-max", T0).unwrap();
-    assert_eq!(s.windows[0].utilization, 0.05, "old window came back: {s:?}");
+    assert_eq!(
+        s.windows[0].utilization, 0.05,
+        "old window came back: {s:?}"
+    );
     // Past its reset a window no longer counts.
     let s = tr.state("claude-max", T0 + 9 * HOUR).unwrap();
     assert!(s.windows.is_empty(), "expired window kept: {s:?}");
@@ -173,7 +176,7 @@ fn exhaustion_ends_at_reset() {
         vec![window("five_hour", 1.0, Some(reset))],
     );
     o.exhausted = true;
-    tr.observe(o);
+    tr.observe(&o);
     let s = tr.state("claude-max", T0).unwrap();
     assert!(s.exhausted && reset_at(&s) == Some(reset), "{s:?}");
     let s = tr.state("claude-max", T0 + 2 * HOUR).unwrap();
@@ -219,7 +222,10 @@ fn parse_claude_reads_both_windows() {
             "bad time",
             r#"{"five_hour": {"utilization": 1, "resets_at": "tomorrow"}}"#,
         ),
-        ("utilization a str", r#"{"five_hour": {"utilization": "55%"}}"#),
+        (
+            "utilization a str",
+            r#"{"five_hour": {"utilization": "55%"}}"#,
+        ),
     ] {
         assert!(
             matches!(
@@ -392,7 +398,10 @@ async fn prober_disables_on_shape_change() {
         matches!(later, Err(Error::ShapeChanged { .. })),
         "still disabled = {later:?}"
     );
-    assert!(matches!(p.status(T0 + HOUR), Err(Error::ShapeChanged { .. })));
+    assert!(matches!(
+        p.status(T0 + HOUR),
+        Err(Error::ShapeChanged { .. })
+    ));
 }
 
 fn write(path: &Path, body: &str) {
@@ -429,12 +438,12 @@ async fn credentials() {
     // test reads the file directly to stay independent of the machine).
     let dir = home.path().join("claude");
     let file = dir.join(".credentials.json");
-    let expires = |at: OffsetDateTime| (at.unix_timestamp_nanos() / 1_000_000).to_string();
+    let millis = |at: OffsetDateTime| (at.unix_timestamp_nanos() / 1_000_000).to_string();
     write(
         &file,
         &format!(
             r#"{{"claudeAiOauth": {{"accessToken": "c-tok", "expiresAt": {}}}}}"#,
-            expires(T0 + HOUR)
+            millis(T0 + HOUR)
         ),
     );
     let claude = ClaudeCredentials::from_dir(&dir).with_clock(|| T0);
@@ -444,7 +453,7 @@ async fn credentials() {
         &file,
         &format!(
             r#"{{"claudeAiOauth": {{"accessToken": "c-tok", "expiresAt": {}}}}}"#,
-            expires(T0 - HOUR)
+            millis(T0 - HOUR)
         ),
     );
     let expired = claude.read().await;
@@ -507,4 +516,44 @@ fn serde_matches_the_go_json() {
     assert_eq!(bare.resets_at, None);
     assert_eq!(bare.duration, None);
     assert_eq!(Health::Exhausted.as_str(), "exhausted");
+}
+
+#[test]
+fn states_are_sorted_and_current() {
+    let mut tr = Tracker::new();
+    for pool in ["zeta", "alpha", ""] {
+        tr.observe(&Observation {
+            pool: pool.to_owned(),
+            ..obs(
+                T0,
+                Source::Stream,
+                vec![window("five_hour", 0.3, Some(T0 + HOUR))],
+            )
+        });
+    }
+    let states = tr.states(T0 + 2 * HOUR);
+    let pools: Vec<&str> = states.iter().map(|s| s.pool.as_str()).collect();
+    assert_eq!(
+        pools,
+        ["alpha", "zeta"],
+        "an observation without a pool is ignored"
+    );
+    assert!(states.iter().all(|s| s.windows.is_empty()), "{states:?}");
+    assert!(tr.state("missing", T0).is_none());
+}
+
+// Off macOS the keychain is never consulted, so the environment's directory is read.
+#[cfg(not(target_os = "macos"))]
+#[tokio::test]
+async fn claude_credentials_follow_the_environment() {
+    let home = tempfile::tempdir().unwrap();
+    let custom = home.path().join("claude-config");
+    write(
+        &custom.join(".credentials.json"),
+        r#"{"claudeAiOauth": {"accessToken": "env-tok"}}"#,
+    );
+    let claude = openchef_quota::claude_credentials(home.path(), |k: &str| {
+        (k == "CLAUDE_CONFIG_DIR").then(|| custom.to_string_lossy().into_owned())
+    });
+    assert_eq!(claude.read().await.unwrap().token.expose(), "env-tok");
 }

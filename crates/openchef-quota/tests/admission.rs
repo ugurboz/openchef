@@ -89,18 +89,26 @@ fn admit_by_health_and_headroom() {
         ("exhausted", Health::Exhausted, at(1.0), Some(0.01), false),
         ("unknown estimate", Health::Yellow, at(0.7), None, true),
         ("fits with margin", Health::Yellow, at(0.7), Some(0.2), true), // 0.26 ≤ 0.30
-        ("margin too thin", Health::Yellow, at(0.7), Some(0.25), false), // 0.325 > 0.30
+        (
+            "margin too thin",
+            Health::Yellow,
+            at(0.7),
+            Some(0.25),
+            false,
+        ), // 0.325 > 0.30
         ("red small step", Health::Red, at(0.9), Some(0.04), true),
         ("red big step", Health::Red, at(0.9), Some(0.06), false),
-        ("no windows", Health::Unknown, State::default(), Some(0.5), true),
+        (
+            "no windows",
+            Health::Unknown,
+            State::default(),
+            Some(0.5),
+            true,
+        ),
     ];
     for (name, h, s, est, want) in cases {
         let got = admit(h, &s, est);
-        assert_eq!(
-            matches!(got, Admission::Admitted),
-            want,
-            "{name}: {got:?}"
-        );
+        assert_eq!(matches!(got, Admission::Admitted), want, "{name}: {got:?}");
     }
     let (free, reset_in) = headroom(&at(0.7), T0);
     assert!(
