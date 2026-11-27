@@ -14,6 +14,9 @@ git -C "$WT" init -q
 
 # Read-only: system, toolchains. Read-write: the worktree, a private temp dir, /dev/null.
 RO=(/usr /bin /sbin /lib /lib64 /etc /proc /sys /dev /opt /usr/local "$HOME/.rustup" "$HOME/.cargo")
+# Round 2: /etc/resolv.conf is a symlink into /run/systemd/resolve; Landlock checks the
+# target, so DNS needs it (round 1: "Could not resolve host").
+[ "${S2_RESOLVER:-1}" = 1 ] && RO+=(/run/systemd/resolve)
 RW=("$WT" "$PRIV_TMP" /dev/null)
 args=()
 for d in "${RO[@]}"; do [ -e "$d" ] && args+=(--ro "$d"); done
@@ -30,6 +33,7 @@ expect() {
   if [ $code -eq 0 ]; then got=ok; else got=fail; fi
   local verdict=PASS; [ "$got" = "$want" ] || verdict=UNEXPECTED
   row "$name" "$want" "$got" "$verdict: $(echo "$out" | grep -v '^landlock-spike:' | tail -1 | cut -c1-90 | tr '|' '/')"
+  if [ "$verdict" != PASS ]; then echo "---- full output of: $name"; echo "$out" | grep -v '^landlock-spike:' | head -20; echo "----"; fi
 }
 # observe NAME CMD... — runs CMD unconfined, records the outcome only
 observe() {
@@ -72,26 +76,32 @@ expect "https to registry.npmjs.org" ok curl -sS -o /dev/null --max-time 15 http
 echo "== verification commands"
 mkdir -p "$WT/rs/src" && printf '[package]\nname="t"\nversion="0.1.0"\nedition="2021"\n' > "$WT/rs/Cargo.toml"
 printf '#[test]\nfn ok() {}\n' > "$WT/rs/src/lib.rs"
-expect "cargo test, default CARGO_HOME" ok cargo test -q --manifest-path "$WT/rs/Cargo.toml"
-expect "cargo test, CARGO_HOME in temp" ok env CARGO_HOME="$PRIV_TMP/cargo" cargo test -q --manifest-path "$WT/rs/Cargo.toml"
+expect "cargo test, default TMPDIR (/tmp)" ok cargo test -q --manifest-path "$WT/rs/Cargo.toml"
+expect "cargo test, TMPDIR private" ok env TMPDIR="$PRIV_TMP" cargo test -q --manifest-path "$WT/rs/Cargo.toml"
+expect "cargo test, TMPDIR + CARGO_HOME private" ok env TMPDIR="$PRIV_TMP" CARGO_HOME="$PRIV_TMP/cargo" cargo test -q --manifest-path "$WT/rs/Cargo.toml"
 mkdir -p "$WT/js" && printf '{"name":"t","version":"1.0.0","scripts":{"test":"node -e 0"}}\n' > "$WT/js/package.json"
 expect "npm test, default cache" ok npm --prefix "$WT/js" test --silent
 expect "npm test, cache in temp" ok env npm_config_cache="$PRIV_TMP/npm" npm --prefix "$WT/js" test --silent
 mkdir -p "$WT/go" && printf 'module t\n\ngo 1.21\n' > "$WT/go/go.mod" && printf 'package t\nimport "testing"\nfunc TestOK(t *testing.T) {}\n' > "$WT/go/t_test.go"
 expect "go test, default caches" ok sh -c "cd '$WT/go' && go test ./..."
 expect "go test, caches in temp" ok sh -c "cd '$WT/go' && GOCACHE='$PRIV_TMP/gocache' GOPATH='$PRIV_TMP/gopath' go test ./..."
+expect "go test, caches + TMPDIR private" ok sh -c "cd '$WT/go' && TMPDIR='$PRIV_TMP' GOCACHE='$PRIV_TMP/gocache' GOPATH='$PRIV_TMP/gopath' go test ./..."
+expect "npm test, npm_config_logs-dir + cache private" ok env TMPDIR="$PRIV_TMP" npm_config_cache="$PRIV_TMP/npm" npm --prefix "$WT/js" test
 mkdir -p "$WT/py" && printf 'import unittest\nclass T(unittest.TestCase):\n    def test_ok(self): pass\n' > "$WT/py/test_t.py"
 expect "python unittest" ok sh -c "cd '$WT/py' && python3 -m unittest -q"
 
 echo "== agent CLIs (no login on CI)"
 if command -v claude >/dev/null; then
   expect "claude --version" ok claude --version
+  # Without a login this cannot run a turn; it shows whether start-up needs more paths.
+  expect "claude -p (no login, expect auth error not EPERM)" fail env TMPDIR="$PRIV_TMP" claude -p hi --output-format json
 else row "claude --version" "-" "not tested" "claude not installed"; fi
 if command -v codex >/dev/null; then
   expect "codex --version" ok codex --version
 else row "codex --version" "-" "not tested" "codex not installed"; fi
 
 echo "== keep-awake (S5)"
+observe "loginctl session of runner user" sh -c 'loginctl list-sessions --no-legend | head -3; echo "XDG_SESSION_ID=${XDG_SESSION_ID:-none}"' 
 observe "systemd-inhibit idle:sleep" systemd-inhibit --what=idle:sleep --who=openchef --why=spike sleep 1
 
 {
