@@ -1,0 +1,106 @@
+---
+source: crates/openchef-core/tests/machines.rs
+expression: "Value::Object(map)"
+---
+{
+  "approval_kind": [
+    "command",
+    "file_change",
+    "tool",
+    "mode_change",
+    "question"
+  ],
+  "approval_status": [
+    "pending",
+    "allowed",
+    "denied",
+    "answered",
+    "expired",
+    "withdrawn"
+  ],
+  "attempt_status": [
+    "running",
+    "succeeded",
+    "failed_over",
+    "failed",
+    "interrupted",
+    "cancelled"
+  ],
+  "backend": [
+    "local",
+    "sandbox"
+  ],
+  "decided_by": [
+    "user",
+    "timeout",
+    "daemon"
+  ],
+  "effort": [
+    "low",
+    "medium",
+    "high",
+    "max"
+  ],
+  "importance": [
+    "low",
+    "normal",
+    "high",
+    "critical"
+  ],
+  "kind": [
+    "run",
+    "pipeline"
+  ],
+  "mode": [
+    "isolated",
+    "team"
+  ],
+  "permission_mode": [
+    "manual",
+    "acceptEdits",
+    "plan",
+    "auto",
+    "dontAsk",
+    "bypassPermissions"
+  ],
+  "session_state": [
+    "starting",
+    "open",
+    "closed"
+  ],
+  "step_status": [
+    "pending",
+    "running",
+    "verified",
+    "failed"
+  ],
+  "task_status": [
+    "planning",
+    "awaiting_approval",
+    "running",
+    "reviewing",
+    "waiting_quota",
+    "needs_attention",
+    "done",
+    "failed",
+    "cancelled"
+  ],
+  "tier": [
+    "fast",
+    "standard",
+    "frontier"
+  ],
+  "turn_kind": [
+    "prompt",
+    "retry",
+    "handoff",
+    "recovery",
+    "nudge"
+  ],
+  "turn_status": [
+    "sent",
+    "completed",
+    "failed",
+    "interrupted"
+  ]
+}
