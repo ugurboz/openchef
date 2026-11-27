@@ -147,6 +147,7 @@ fn deps_for(home: &Path) -> Deps {
         interactive: false,
         start_daemon: None,
         cwd: None,
+        mcp_stdio: None,
     }
 }
 
@@ -665,4 +666,109 @@ fn deny_and_answer() {
             assert!(out.contains(want), "run output lacks {want:?}:\n{out}");
         }
     });
+}
+
+/// The agent CLI's side of the MCP pipes: a sink `close` hangs up like an exiting
+/// agent.
+struct PipeSink(Mutex<Option<std::io::PipeWriter>>);
+
+impl openchef_runtime::linerpc::LineSink for PipeSink {
+    fn send_line(&self, mut line: Vec<u8>) -> BoxFuture<'static, std::io::Result<()>> {
+        use std::io::Write as _;
+        line.push(b'\n');
+        let r = match self.0.lock().unwrap().as_mut() {
+            Some(w) => w.write_all(&line),
+            None => Err(std::io::ErrorKind::BrokenPipe.into()),
+        };
+        Box::pin(async move { r })
+    }
+}
+
+/// An agent's `ask_user` call travels MCP server → daemon queue → `openchef answer`
+/// and the answer comes back as the tool result (D-024 acceptance).
+#[test]
+fn ask_user_through_the_daemon() {
+    use openchef_runtime::linerpc::{self, Peer};
+
+    let e = CliEnv::new();
+    e.claude.push([Turn {
+        hang: true,
+        ..Turn::default()
+    }]);
+    let (code, out, err) = e.cli(&["run", "--detach", "work"]);
+    assert_eq!(code, exit::OK, "run: {err}\n{out}");
+    let id = task_id_from(&out);
+
+    // The agent's CLI side: pipes to an in-process `openchef mcp ask-user`.
+    let (server_in, to_server) = std::io::pipe().unwrap();
+    let (from_server, server_out) = std::io::pipe().unwrap();
+    let stdio = Mutex::new(Some((server_in, server_out)));
+    let mut deps = deps_for(e.deps.home.as_ref().unwrap());
+    deps.mcp_stdio = Some(Arc::new(move || {
+        let (r, w) = stdio.lock().unwrap().take().unwrap();
+        (
+            Box::new(r) as Box<dyn std::io::Read + Send>,
+            Box::new(w) as Box<dyn std::io::Write + Send>,
+        )
+    }));
+    std::thread::scope(|scope| {
+        let served = scope.spawn(|| {
+            cli_with(
+                &deps,
+                &["mcp", "ask-user", "--task", &id, "--agent", "opus"],
+            )
+        });
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let sink = Arc::new(PipeSink(Mutex::new(Some(to_server))));
+        let agent = rt.block_on(async {
+            let (agent, _notes) = Peer::new(
+                from_server,
+                Arc::clone(&sink) as Arc<dyn linerpc::LineSink>,
+                linerpc::Options::default(),
+            );
+            let cancel = CancellationToken::new();
+            agent
+                .call_value(
+                    "initialize",
+                    json!({"protocolVersion": "2025-06-18"}),
+                    &cancel,
+                )
+                .await
+                .unwrap();
+            agent
+        });
+        let call = rt.spawn(async move {
+            agent
+                .call_value(
+                    "tools/call",
+                    json!({"name": "ask_user",
+                           "arguments": {"question": "Which port?", "options": ["8080", "9090"]}}),
+                    &CancellationToken::new(),
+                )
+                .await
+        });
+        let p = e.wait_pending();
+        assert_eq!(
+            (p.summary.as_str(), p.agent.as_str(), p.task_id.as_str()),
+            ("Which port?", "opus", id.as_str()),
+            "pending {p:?}"
+        );
+        assert_eq!(p.options, ["8080", "9090"]);
+        let (code, out, err) = e.cli(&["answer", &p.id.to_string(), "9090"]);
+        assert_eq!(code, exit::OK, "answer: {err}\n{out}");
+        let r = rt
+            .block_on(async { tokio::time::timeout(Duration::from_secs(10), call).await })
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        assert_eq!(r["content"][0]["text"], "9090", "tool result {r}");
+        drop(sink.0.lock().unwrap().take()); // the agent exits: the server ends
+        let (code, out, err) = served.join().unwrap();
+        assert_eq!(code, exit::OK, "server: {err}\n{out}");
+    });
+    let (code, out, err) = e.cli(&["cancel", &id]);
+    assert_eq!(code, exit::OK, "cancel: {err}\n{out}");
 }

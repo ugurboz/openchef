@@ -82,6 +82,12 @@ pub(crate) enum Command {
     Deny(DenyArgs),
     /// Answer an agent's question.
     Answer(AnswerArgs),
+    /// MCP servers OpenChef gives its agents (started by the agents' CLIs).
+    #[command(hide = true)]
+    Mcp {
+        #[command(subcommand)]
+        command: McpCommand,
+    },
     /// Not built yet.
     #[command(external_subcommand)]
     Pending(Vec<String>),
@@ -114,6 +120,22 @@ pub(crate) enum DaemonCommand {
     Stop(JsonFlag),
     /// Show whether the daemon is running (exit status 3 when it is not).
     Status(JsonFlag),
+}
+
+#[derive(Debug, Subcommand)]
+pub(crate) enum McpCommand {
+    /// Serve the `ask_user` tool on stdin/stdout for one task's agent.
+    AskUser(AskUserArgs),
+}
+
+#[derive(Debug, clap::Args)]
+pub(crate) struct AskUserArgs {
+    /// The task the agent works on.
+    #[arg(long, required = true)]
+    pub(crate) task: String,
+    /// The agent's name.
+    #[arg(long, required = true)]
+    pub(crate) agent: String,
 }
 
 #[derive(Debug, clap::Args)]
