@@ -2,7 +2,7 @@
 //! depend on.
 
 // Test helpers outside `#[test]` functions may unwrap too (AGENTS.md §5).
-#![allow(clippy::unwrap_used, clippy::expect_used)]
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use openchef_core::{
     ApprovalKind, ApprovalStatus, AttemptStatus, Backend, DecidedBy, Effort, Importance, Kind,

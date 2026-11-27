@@ -8,5 +8,26 @@ license.workspace = true
 repository.workspace = true
 publish = false
 
+# A small child program the tests start in different modes (echo, sleep, spawn, …).
+# Never distributed: release packaging only ships the `openchef` binary.
+[[bin]]
+name = "procs-test-helper"
+path = "src/bin/procs-test-helper.rs"
+test = false
+doc = false
+
+[dependencies]
+serde.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["sync", "time", "macros", "rt"] }
+tokio-util.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+libc.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time"] }
+
 [lints]
 workspace = true
