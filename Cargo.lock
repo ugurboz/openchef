@@ -574,6 +574,15 @@ version = "0.1.0"
 [[package]]
 name = "openchef-fake"
 version = "0.1.0"
+dependencies = [
+ "openchef-core",
+ "openchef-procs",
+ "openchef-runtime",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tokio-util",
+]
 
 [[package]]
 name = "openchef-gitws"
