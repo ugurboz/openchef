@@ -69,6 +69,10 @@ unused_must_use = "deny"
 missing_docs = "warn"
 unreachable_pub = "warn"
 
+# The dependency table lists crates later milestones will use (§16).
+[workspace.lints.cargo]
+unused_workspace_dependencies = "allow"
+
 [workspace.lints.clippy]
 all = { level = "warn", priority = -1 }
 pedantic = { level = "warn", priority = -1 }
