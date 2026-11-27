@@ -795,6 +795,15 @@ dependencies = [
 [[package]]
 name = "openchef-api"
 version = "0.1.0"
+dependencies = [
+ "openchef-runtime",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "time",
+ "tokio",
+ "tokio-util",
+]
 
 [[package]]
 name = "openchef-config"
@@ -825,6 +834,17 @@ dependencies = [
 [[package]]
 name = "openchef-daemon"
 version = "0.1.0"
+dependencies = [
+ "openchef-api",
+ "openchef-config",
+ "openchef-runtime",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "time",
+ "tokio",
+ "tokio-util",
+]
 
 [[package]]
 name = "openchef-engine"
