@@ -1,8 +1,8 @@
 //! Ported from `internal/procs/procs_test.go` (Go reference).
 //!
 //! Dropped: `TestStartErrors`' cancelled-context case — `Process::start` is synchronous
-//! and takes no context. Windows runs these tests once R0.4 lands.
-#![cfg(unix)]
+//! and takes no context. Every test runs on Windows too: there the termination-signal
+//! stage is skipped, so `ignored_term_signal_still_stops` exercises the forced kill.
 // Test helpers outside `#[test]` functions may unwrap too (AGENTS.md §5).
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
