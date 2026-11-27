@@ -693,6 +693,7 @@ impl Actor {
     /// The app server is gone.
     fn gone(&mut self) {
         self.closed = true;
+        let ended = self.turn.as_ref().map(|t| t.id);
         if let Some(t) = &self.turn {
             let mut message = "codex app-server exited during the turn".to_owned();
             if let Some(e) = self.peer.stop_error() {
@@ -702,8 +703,16 @@ impl Actor {
             f.usage = t.usage();
             self.end_turn(EventBody::TurnFailed(f));
         }
+        // The server can exit right after answering turn/start, before that answer
+        // reaches the actor. The turn was sent, so it ends as crashed, like any turn
+        // the server dies in; only a turn that never started is refused.
         if let Some(s) = self.starting.take() {
-            drop(s.reply.send(Err(Error::SessionClosed)));
+            let reply = if ended == Some(s.turn) {
+                Ok(s.rx)
+            } else {
+                Err(Error::SessionClosed)
+            };
+            drop(s.reply.send(reply));
         }
     }
 
