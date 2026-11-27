@@ -79,6 +79,9 @@ it is a bug: fix it, do not retry until green.
 - Port Go tests first (§2.3). Table-driven cases become `#[test]` functions or
   `proptest`/`rstest`-style tables.
 - Tests must not depend on timing margins below 1 s on CI; wait for events, not sleeps.
+- `unwrap`/`expect` are fine inside `#[test]` functions. Integration test files
+  (`tests/*.rs`) with helper functions start with
+  `#![allow(clippy::unwrap_used, clippy::expect_used)]` after the file doc comment.
 - Use `tempfile` for every filesystem test; never touch the real `~/.openchef`.
 - Live tests against real CLIs are `#[ignore]` and run only with `OPENCHEF_LIVE=1`.
 - Platform-specific tests use `#[cfg(target_os = "…")]` and must exist for every OS
