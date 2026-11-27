@@ -1,0 +1,68 @@
+---
+source: crates/openchef-config/tests/config.rs
+expression: cfg.to_toml().unwrap()
+---
+[pools.chatgpt]
+provider = "openai"
+billing = "subscription"
+plan_tier = "plus"
+max_concurrent = 2
+effort_profile = "auto"
+
+[pools.claude]
+provider = "anthropic"
+billing = "subscription"
+plan_tier = "pro"
+max_concurrent = 2
+effort_profile = "auto"
+
+[pools.google]
+provider = "google"
+billing = "subscription"
+plan_tier = "pro"
+max_concurrent = 2
+effort_profile = "auto"
+
+[agents.gemini]
+runtime = "agy"
+pool = "google"
+tier = "frontier"
+
+[agents.gpt]
+runtime = "codex"
+pool = "chatgpt"
+tier = "frontier"
+
+[agents.haiku]
+runtime = "claude"
+model = "haiku"
+pool = "claude"
+tier = "fast"
+
+[agents.opus]
+runtime = "claude"
+model = "opus"
+pool = "claude"
+tier = "frontier"
+
+[agents.sonnet]
+runtime = "claude"
+model = "sonnet"
+pool = "claude"
+tier = "standard"
+
+[routing.helper]
+strategy = "auto"
+agents = ["haiku", "gemini", "gpt"]
+
+[routing.implement]
+strategy = "auto"
+agents = ["opus", "gpt", "gemini", "sonnet"]
+
+[routing.plan]
+strategy = "auto"
+agents = ["opus", "gpt", "gemini"]
+
+[routing.review]
+strategy = "auto"
+agents = ["gpt", "gemini", "opus"]
