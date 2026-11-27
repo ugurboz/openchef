@@ -587,6 +587,12 @@ dependencies = [
 [[package]]
 name = "openchef-gitws"
 version = "0.1.0"
+dependencies = [
+ "sha2",
+ "tempfile",
+ "thiserror",
+ "tokio",
+]
 
 [[package]]
 name = "openchef-permissions"
