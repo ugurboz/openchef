@@ -66,7 +66,6 @@ openchef-tui = { path = "crates/openchef-tui" }
 [workspace.lints.rust]
 unsafe_code = "deny"
 unused_must_use = "deny"
-unused_results = "warn"
 missing_docs = "warn"
 unreachable_pub = "warn"
 

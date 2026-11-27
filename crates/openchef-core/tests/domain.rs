@@ -4,7 +4,7 @@
 //! become parse tests here: in Rust such values cannot be constructed at all.
 
 // Test helpers outside `#[test]` functions may unwrap too (AGENTS.md §5).
-#![allow(clippy::unwrap_used, clippy::expect_used)]
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use std::collections::HashSet;
 use std::path::PathBuf;
