@@ -1,0 +1,38 @@
+---
+source: crates/openchef-cli/tests/cli.rs
+expression: report
+---
+{
+  "config": {
+    "status": "missing"
+  },
+  "healthy": true,
+  "paths": "<paths>",
+  "runtimes": [
+    {
+      "binary": "claude",
+      "found": true,
+      "login": "logged_in",
+      "login_detail": "claude.ai",
+      "path": "/fake/claude",
+      "runtime": "claude",
+      "version": "1.0.0"
+    },
+    {
+      "binary": "codex",
+      "found": true,
+      "login": "logged_out",
+      "login_detail": "run `codex login`",
+      "path": "/fake/codex",
+      "runtime": "codex",
+      "version": "1.0.0"
+    },
+    {
+      "binary": "agy",
+      "found": false,
+      "login": "unknown",
+      "problem": "not installed (not found on PATH)",
+      "runtime": "agy"
+    }
+  ]
+}
