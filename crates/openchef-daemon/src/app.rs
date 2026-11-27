@@ -5,44 +5,53 @@
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::Arc;
 use std::time::Duration;
 
 use openchef_config::{Config, Paths, Phase};
 use openchef_core::{APPROVAL_TIMEOUT, Task};
 use openchef_engine::service::{Deps, Service};
-use openchef_engine::{Agent, Config as EngineConfig, DynRuntime, Ordered, Runtimes, SpecFor};
+use openchef_engine::{Agent, Config as EngineConfig, DynRuntime, Runtimes, SpecFor};
 use openchef_runtime::agy::{AgyOptions, AgyRuntime};
 use openchef_runtime::claude::{ClaudeOptions, ClaudeRuntime};
 use openchef_runtime::codex::{CodexOptions, CodexRuntime};
 use openchef_runtime::{McpServer, SessionSpec};
 use openchef_store::Store;
-use time::OffsetDateTime;
+use time::{OffsetDateTime, UtcOffset};
 use tokio_util::sync::CancellationToken;
 
 use crate::approver::{LateQueue, PolicyApprover};
 use crate::env::session_env;
 use crate::notify::desktop_notifier;
 use crate::policy::Policies;
+use crate::quota::{
+    DEFAULT_PROBE_INTERVAL, Quota, QuotaTap, Settings as QuotaSettings, budgets_for, probes_for,
+    quota_methods,
+};
+use crate::router::QuotaRouter;
 use crate::{Init, OnStop, Options, STOP_TIMEOUT, Services, service_methods};
 
 /// How much longer than the approval queue an `ask_user` call may take.
 const ASK_USER_GRACE: Duration = Duration::from_mins(1);
-
-/// How long a pool cools down when it ran out of quota without saying until when.
-const UNKNOWN_RESET: Duration = Duration::from_hours(1);
 
 /// The service's share of [`STOP_TIMEOUT`], leaving time to close the store.
 const SERVICE_STOP: Duration = Duration::from_secs(STOP_TIMEOUT.as_secs().saturating_sub(1));
 
 /// The daemon's options: its [`Init`] (run while the daemon holds the lock) loads the
 /// configuration, opens the store, recovers work left by a previous daemon and exposes
-/// the task API.
+/// the task API. `local_offset` decides when API budgets' days and months begin; read
+/// it before the async runtime starts threads, where Unix platforms can tell it
+/// safely.
 #[must_use]
-pub fn daemon_options(paths: Paths, version: String, shutdown: CancellationToken) -> Options {
+pub fn daemon_options(
+    paths: Paths,
+    version: String,
+    shutdown: CancellationToken,
+    local_offset: UtcOffset,
+) -> Options {
     let init: Init = {
         let (paths, version) = (paths.clone(), version.clone());
-        Box::new(move || Box::pin(async move { services(paths, version).await }))
+        Box::new(move || Box::pin(async move { services(paths, version, local_offset).await }))
     };
     Options {
         paths,
@@ -54,7 +63,7 @@ pub fn daemon_options(paths: Paths, version: String, shutdown: CancellationToken
     }
 }
 
-async fn services(paths: Paths, version: String) -> Result<Services, String> {
+async fn services(paths: Paths, version: String, offset: UtcOffset) -> Result<Services, String> {
     let cfg = match Config::load(&paths.config) {
         Ok(cfg) => cfg,
         Err(e @ openchef_config::Error::NotFound { .. }) => {
@@ -64,9 +73,16 @@ async fn services(paths: Paths, version: String) -> Result<Services, String> {
     };
     paths.ensure_dirs().map_err(|e| e.to_string())?;
     let store = Store::open(&paths.state).await.map_err(|e| e.to_string())?;
-    let service = match build(&cfg, &paths, &version, &store) {
-        Ok(s) => s,
+    let quota = match start_quota(&cfg, &store, offset).await {
+        Ok(q) => q,
         Err(e) => return Err(close_after(store, e).await),
+    };
+    let service = match build(&cfg, &paths, &version, &store, &quota) {
+        Ok(s) => s,
+        Err(e) => {
+            quota.stop().await;
+            return Err(close_after(store, e).await);
+        }
     };
     match service.start().await {
         Ok(0) => {}
@@ -78,8 +94,13 @@ async fn services(paths: Paths, version: String) -> Result<Services, String> {
                 "killed processes left by a previous daemon: {killed}"
             );
         }
-        Err(e) => return Err(close_after(store, e.to_string()).await),
+        Err(e) => {
+            quota.stop().await;
+            return Err(close_after(store, e.to_string()).await);
+        }
     }
+    let mut methods = service_methods(service.clone());
+    methods.extend(quota_methods(quota.clone()));
     let on_stop: OnStop = {
         let service = service.clone();
         Box::new(move || {
@@ -90,12 +111,14 @@ async fn services(paths: Paths, version: String) -> Result<Services, String> {
                     .stop(SERVICE_STOP)
                     .await
                     .map_err(|e| e.to_string())?;
+                // After the engine: its last events may still carry quota records.
+                quota.stop().await;
                 store.close().await.map_err(|e| e.to_string())
             })
         })
     };
     Ok(Services {
-        methods: service_methods(service),
+        methods,
         on_stop: Some(on_stop),
     })
 }
@@ -107,7 +130,28 @@ async fn close_after(store: Store, error: String) -> String {
     }
 }
 
-fn build(cfg: &Config, paths: &Paths, version: &str, store: &Store) -> Result<Service, String> {
+/// Starts quota tracking: the probes the configuration allows, the API pools'
+/// budgets, and the local day and month for them.
+async fn start_quota(cfg: &Config, store: &Store, offset: UtcOffset) -> Result<Quota, String> {
+    let home = std::env::home_dir().ok_or("cannot locate the user's home directory")?;
+    Quota::start(QuotaSettings {
+        store: store.clone(),
+        probes: probes_for(cfg, &home),
+        interval: DEFAULT_PROBE_INTERVAL,
+        clock: Arc::new(OffsetDateTime::now_utc),
+        budgets: budgets_for(cfg),
+        offset,
+    })
+    .await
+}
+
+fn build(
+    cfg: &Config,
+    paths: &Paths,
+    version: &str,
+    store: &Store,
+    quota: &Quota,
+) -> Result<Service, String> {
     let mut runtimes: Runtimes = HashMap::new();
     let claude = ClaudeRuntime::new(ClaudeOptions::default());
     let codex = CodexRuntime::new(CodexOptions {
@@ -122,14 +166,7 @@ fn build(cfg: &Config, paths: &Paths, version: &str, store: &Store) -> Result<Se
     runtimes.insert("codex".into(), Arc::new(codex) as Arc<dyn DynRuntime>);
     runtimes.insert("agy".into(), Arc::new(agy) as Arc<dyn DynRuntime>);
 
-    let cooldowns = Arc::new(Cooldowns::default());
-    let router = Arc::new(Ordered {
-        agents: agents(cfg),
-        cooldown: Some({
-            let c = Arc::clone(&cooldowns);
-            Arc::new(move |pool: &str| c.get(pool, OffsetDateTime::now_utc()))
-        }),
-    });
+    let router = Arc::new(QuotaRouter::new(cfg, Arc::new(quota.clone())));
     let policies = Policies::new(paths)?;
     let queue = LateQueue::default();
     let exe =
@@ -146,11 +183,17 @@ fn build(cfg: &Config, paths: &Paths, version: &str, store: &Store) -> Result<Se
     let mut engine = EngineConfig::new(store.clone(), runtimes, router, spec_for, &paths.home);
     engine.verify_env = openchef_engine::verify::minimal_env(std::env::vars_os(), &[]);
     engine.pool_exhausted = Some({
-        let c = Arc::clone(&cooldowns);
-        Arc::new(move |pool: &str, until: Option<OffsetDateTime>| {
-            c.set(pool, until, OffsetDateTime::now_utc());
-        })
+        let q = quota.clone();
+        Arc::new(move |pool: &str, until: Option<OffsetDateTime>| q.exhausted(pool, until))
     });
+    let tap = QuotaTap {
+        quota: quota.clone(),
+        pool_of: cfg
+            .agents
+            .iter()
+            .map(|(name, a)| (name.clone(), a.pool.clone()))
+            .collect(),
+    };
     let service = Service::new(Deps {
         engine,
         event_dir: paths.sessions.clone(),
@@ -162,6 +205,7 @@ fn build(cfg: &Config, paths: &Paths, version: &str, store: &Store) -> Result<Se
         })),
         approval_timeout: None,
         notify: desktop_notifier(),
+        tap: Some(Arc::new(tap)),
     })
     .map_err(|e| e.to_string())?;
     queue.set(service.clone());
@@ -265,44 +309,14 @@ pub fn agents(cfg: &Config) -> Vec<Agent> {
         .collect()
 }
 
-/// Pools that ran out of quota, until their reset: the stand-in for quota tracking
-/// (§10, R4.3). A small leaf value, never held across `.await` (D-030).
-#[derive(Debug, Default)]
-struct Cooldowns {
-    until: Mutex<HashMap<String, OffsetDateTime>>,
-}
-
-impl Cooldowns {
-    fn set(&self, pool: &str, until: Option<OffsetDateTime>, now: OffsetDateTime) {
-        let until = until.unwrap_or(now + UNKNOWN_RESET);
-        let _previous = self
-            .until
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .insert(pool.to_owned(), until);
-    }
-
-    fn get(&self, pool: &str, now: OffsetDateTime) -> Option<OffsetDateTime> {
-        let mut map = self.until.lock().unwrap_or_else(PoisonError::into_inner);
-        match map.get(pool).copied() {
-            Some(u) if now >= u => {
-                let _expired = map.remove(pool);
-                None
-            }
-            other => other,
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
 
     use openchef_config::{Agent, Config, PhaseRouting, Quota, Runtime, Strategy};
     use openchef_core::{Effort, Tier};
-    use time::OffsetDateTime;
 
-    use super::{Cooldowns, agents};
+    use super::agents;
 
     fn agent(runtime: Runtime, pool: &str, effort: Option<Effort>) -> Agent {
         Agent {
@@ -388,16 +402,5 @@ mod tests {
             "the queue, not the CLI, ends a wait"
         );
         assert_eq!(spec.mode, openchef_core::PermissionMode::AcceptEdits);
-    }
-
-    #[test]
-    fn cooldowns_expire() {
-        let c = Cooldowns::default();
-        let now = OffsetDateTime::UNIX_EPOCH;
-        assert_eq!(c.get("p", now), None);
-        c.set("p", None, now);
-        assert_eq!(c.get("p", now), Some(now + super::UNKNOWN_RESET));
-        assert_eq!(c.get("p", now + super::UNKNOWN_RESET), None, "expired");
-        assert_eq!(c.get("p", now), None, "removed once expired");
     }
 }

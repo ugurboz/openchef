@@ -694,3 +694,33 @@ where they name Go packages or types, read the matching crate (`internal/<x>` �
   commands that settle it.
 - **Consequences:** the path guard remains the invariant check inside the evaluator.
   `ask_user` over MCP (R4.2b) reuses the same queue.
+
+## D-035 — Quota in Rust: two actors, a published view, budgets in the local day
+*2026-11-28 · R4.3, R4.4 · ports D-025, D-026*
+
+- **Context:** Go's `service.Quota` was a mutex-guarded object whose probes ran under
+  the same lock holder; D-030 asks for actors, and the engine's `Router::route` is
+  synchronous.
+- **Options:** (a) one actor owning tracker, costs and probes; (b) a monitor actor for
+  state and a probe-runner actor for the L2 probes, with the monitor publishing an
+  immutable view over a `watch` channel; (c) a lock around the tracker.
+- **Challenge:** (a) blocks every observation, report and routing read for up to 10 s
+  per probe. (c) is the shared-lock graph D-030 forbids. A `watch` view is copied on
+  every change, but a tracker holds a handful of pools, so the copy is cheap next to
+  a turn.
+- **Decision:** (b). Engine-facing calls (`observe`, `attempt_*`, `spend`, `exhausted`)
+  use `try_send` into bounded queues and never block; a full queue loses the record
+  and logs it (Go kept such observations in memory; here the monitor's queue is the
+  memory, 1024 deep). A manual refresh asks the runner, which hands observations to the
+  monitor before replying, so the report that follows includes them. The router
+  reads the latest view synchronously. Quota sees engine events through a new
+  service tap (`Deps.tap`), ahead of the event log. Windows store `duration` as whole
+  seconds. API budgets' days and months use the local UTC offset read by `openchef
+  daemon run` before its runtime starts threads (Unix cannot read it safely later);
+  unknown means UTC. The `ask_user` question limit counts characters, not bytes.
+- **Consequences:** `Ordered` and its cooldowns stay in the engine for tests; the
+  daemon routes with `QuotaRouter`. Tests port `TestQuota*`, `TestProbesFor`,
+  `TestQuotaSinkRecordsStreamSignals`, `TestRoutingFollowsQuota`,
+  `TestPinnedAgentIsAdmittedNotChosen`, `TestWeightedSharesAndEffort` and
+  `TestQuotaCommand`. `openchef doctor` does not show a running daemon's probes yet
+  (#43).

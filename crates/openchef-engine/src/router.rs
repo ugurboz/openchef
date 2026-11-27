@@ -1,5 +1,5 @@
-//! Choosing the agent for an attempt (§7.3). Quota-aware strategies arrive with R4.4;
-//! this is the ordered router the engine starts with.
+//! Choosing the agent for an attempt (§7.3). The daemon routes by quota (D-035);
+//! this ordered router is the engine's simple default, used by tests.
 
 use openchef_core::{Effort, Step, Task};
 use time::OffsetDateTime;

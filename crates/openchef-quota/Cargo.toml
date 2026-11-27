@@ -8,5 +8,20 @@ license.workspace = true
 repository.workspace = true
 publish = false
 
+[dependencies]
+openchef-runtime.workspace = true
+# Only TLS: the probes decode bodies with serde_json and need no other client feature.
+reqwest = { workspace = true, features = ["rustls"] }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+time.workspace = true
+tokio = { workspace = true, features = ["fs", "macros", "process", "time"] }
+tokio-util.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+tokio = { workspace = true, features = ["rt", "macros", "net", "io-util"] }
+
 [lints]
 workspace = true

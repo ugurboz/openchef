@@ -16,6 +16,7 @@ use std::time::{Duration, Instant};
 use openchef_cli::{Deps, StartDaemon, exit, run};
 use openchef_config::{Detector, Paths};
 use openchef_core::{Approval, ApprovalKind, ApprovalStatus, PermissionMode, Task, TaskId};
+use openchef_daemon::quota::{Quota, Settings as QuotaSettings, quota_methods};
 use openchef_daemon::{Options, Services, service_methods};
 use openchef_engine::service::{AskRequest, Deps as ServiceDeps, Service};
 use openchef_engine::{Agent, Config, DynRuntime, Ordered, Runtimes};
@@ -96,6 +97,9 @@ impl Approver for Queued {
     }
 }
 
+/// The running daemon's quota monitor, for tests that feed it observations.
+type QuotaSlot = Arc<Mutex<Option<Quota>>>;
+
 /// A daemon thread: its shutdown token and the thread to join.
 type Running = (CancellationToken, std::thread::JoinHandle<()>);
 
@@ -107,6 +111,7 @@ struct CliEnv {
     claude: FakeRuntime,
     deps: Deps,
     daemon: Arc<Mutex<Option<Running>>>,
+    quota: QuotaSlot,
 }
 
 fn git(dir: &Path, args: &[&str]) {
@@ -169,9 +174,10 @@ fn spec(approver: Arc<dyn Approver>) -> SessionSpec {
 }
 
 /// Serves `paths` with the fake agent until the token is cancelled.
-fn start_daemon(paths: &Paths, claude: &FakeRuntime) -> Running {
+fn start_daemon(paths: &Paths, claude: &FakeRuntime, quota_slot: &QuotaSlot) -> Running {
     let shutdown = CancellationToken::new();
     let (paths, claude, token) = (paths.clone(), claude.clone(), shutdown.clone());
+    let quota_slot = Arc::clone(quota_slot);
     let thread = std::thread::spawn(move || {
         let rt = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
@@ -218,19 +224,33 @@ fn start_daemon(paths: &Paths, claude: &FakeRuntime) -> Running {
                         on_fail: None,
                         approval_timeout: None,
                         notify: None,
+                        tap: None,
                     })
                     .map_err(|e| e.to_string())?;
                     let _first = late.set(service.clone());
                     let _killed = service.start().await.map_err(|e| e.to_string())?;
+                    let quota = Quota::start(QuotaSettings {
+                        store: store.clone(),
+                        probes: Vec::new(),
+                        interval: Duration::from_hours(1),
+                        clock: Arc::new(time::OffsetDateTime::now_utc),
+                        budgets: std::collections::BTreeMap::new(),
+                        offset: time::UtcOffset::UTC,
+                    })
+                    .await?;
+                    *quota_slot.lock().unwrap() = Some(quota.clone());
                     let stopping = service.clone();
+                    let mut methods = service_methods(service);
+                    methods.extend(quota_methods(quota.clone()));
                     Ok(Services {
-                        methods: service_methods(service),
+                        methods,
                         on_stop: Some(Box::new(move || {
                             Box::pin(async move {
                                 stopping
                                     .stop(Duration::from_secs(5))
                                     .await
                                     .map_err(|e| e.to_string())?;
+                                quota.stop().await;
                                 store.close().await.map_err(|e| e.to_string())
                             })
                         })),
@@ -275,12 +295,13 @@ impl CliEnv {
         }
         let claude = FakeRuntime::new("claude", []);
         let daemon: Arc<Mutex<Option<Running>>> = Arc::new(Mutex::new(None));
+        let quota: QuotaSlot = Arc::new(Mutex::new(None));
         let start: StartDaemon = {
-            let (daemon, claude) = (Arc::clone(&daemon), claude.clone());
+            let (daemon, claude, quota) = (Arc::clone(&daemon), claude.clone(), Arc::clone(&quota));
             Arc::new(move |paths: &Paths| {
                 let mut d = daemon.lock().unwrap();
                 if d.is_none() {
-                    *d = Some(start_daemon(paths, &claude));
+                    *d = Some(start_daemon(paths, &claude, &quota));
                     wait_for_socket(paths);
                 }
                 Ok(())
@@ -295,6 +316,7 @@ impl CliEnv {
             claude,
             deps,
             daemon,
+            quota,
         }
     }
 
@@ -474,7 +496,11 @@ fn daemon_status_and_stop() {
         "stop without daemon: {out}"
     );
 
-    let (_token, thread) = start_daemon(&paths, &FakeRuntime::new("claude", []));
+    let (_token, thread) = start_daemon(
+        &paths,
+        &FakeRuntime::new("claude", []),
+        &QuotaSlot::default(),
+    );
     wait_for_socket(&paths);
     let (code, out, err) = cli_with(&deps, &["daemon", "status"]);
     assert!(
@@ -771,4 +797,67 @@ fn ask_user_through_the_daemon() {
     });
     let (code, out, err) = e.cli(&["cancel", &id]);
     assert_eq!(code, exit::OK, "cancel: {err}\n{out}");
+}
+
+#[test]
+fn quota_command() {
+    use openchef_quota::{Observation, Source, Window};
+
+    let e = CliEnv::new();
+    // `quota` does not start a daemon itself.
+    let home = e.deps.home.clone().unwrap();
+    (e.deps.start_daemon.as_ref().unwrap())(&Paths::in_home(&home).unwrap()).unwrap();
+    let (code, out, err) = e.cli(&["quota"]);
+    assert!(
+        code == exit::OK && out.contains("no quota data yet"),
+        "empty quota: {err}\n{out}"
+    );
+    let now = time::OffsetDateTime::now_utc();
+    let quota = e.quota.lock().unwrap().clone().unwrap();
+    quota.observe(Observation {
+        pool: "claude-max".into(),
+        source: Source::Stream,
+        at: now,
+        windows: vec![
+            Window {
+                name: "five_hour".into(),
+                utilization: 0.72,
+                resets_at: Some(now + Duration::from_hours(2)),
+                duration: None,
+            },
+            Window {
+                name: "weekly".into(),
+                utilization: 0.1,
+                resets_at: None,
+                duration: None,
+            },
+        ],
+        exhausted: false,
+    });
+    let (code, out, err) = e.cli(&["quota"]);
+    assert_eq!(code, exit::OK, "{err}");
+    for want in [
+        "claude-max",
+        "yellow",
+        "five_hour",
+        "72%",
+        "in 2h00m",
+        "weekly",
+        "10%",
+    ] {
+        assert!(out.contains(want), "quota lacks {want:?}:\n{out}");
+    }
+    let (code, out, _) = e.cli(&["quota", "--json"]);
+    let r: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert!(
+        code == exit::OK && r["pools"][0]["health"] == "yellow",
+        "quota --json:\n{out}"
+    );
+    let (code, out, err) = e.cli(&["quota", "probes", "off"]);
+    assert!(
+        code == exit::OK && out.contains("usage probes off"),
+        "probes off: {err}\n{out}"
+    );
+    let (code, _, _) = e.cli(&["quota", "probes", "maybe"]);
+    assert_eq!(code, exit::USAGE, "bad switch accepted");
 }

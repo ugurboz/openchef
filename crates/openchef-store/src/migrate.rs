@@ -31,10 +31,13 @@ impl Migration {
 
 /// The migrations compiled into this binary.
 pub(crate) fn embedded() -> Vec<Migration> {
-    vec![Migration::new(
-        "0001_init.sql",
-        include_str!("../migrations/0001_init.sql"),
-    )]
+    vec![
+        Migration::new("0001_init.sql", include_str!("../migrations/0001_init.sql")),
+        Migration::new(
+            "0002_quota.sql",
+            include_str!("../migrations/0002_quota.sql"),
+        ),
+    ]
 }
 
 struct Checked {

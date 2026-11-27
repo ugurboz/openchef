@@ -6,6 +6,7 @@
 mod approvals;
 mod client;
 pub mod mcp;
+mod quota;
 mod tasks;
 pub mod transport;
 
@@ -14,6 +15,7 @@ use std::path::PathBuf;
 pub use approvals::*;
 pub use client::Client;
 use openchef_runtime::linerpc::RpcError;
+pub use quota::*;
 use serde::{Deserialize, Serialize};
 pub use tasks::*;
 use time::OffsetDateTime;
