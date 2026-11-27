@@ -106,6 +106,7 @@ async fn replay(mode: PermissionMode, files: &[&str]) -> Replayed {
         }),
         log_path: None,
         on_spawn: None,
+        confine: None,
     };
     let session = SessionRef {
         runtime: NAME.into(),

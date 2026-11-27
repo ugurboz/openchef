@@ -188,9 +188,13 @@ pub(crate) enum Thread {
 
 /// Builds `thread/start` and `thread/resume` parameters. Every mode except plan uses
 /// `workspace-write` with approvals routed to OpenChef (`untrusted`): the approver
-/// applies the mode and the deny rules, so they hold even in bypass (§9.3).
+/// applies the mode and the deny rules, so they hold even in bypass (§9.3). Inside
+/// OpenChef's sandbox Codex's own cannot apply (sandboxes do not nest, D-032), so it
+/// runs `danger-full-access` and OpenChef's sandbox is the boundary.
 pub(crate) fn thread_params(spec: &SessionSpec, extra: &[(&str, Value)]) -> Value {
-    let sandbox = if spec.mode == PermissionMode::Plan {
+    let sandbox = if spec.confine.is_some() {
+        "danger-full-access"
+    } else if spec.mode == PermissionMode::Plan {
         "read-only"
     } else {
         "workspace-write"
@@ -239,6 +243,7 @@ impl CodexSession {
             env: spec.env.iter().map(|(k, v)| (k.into(), v.into())).collect(),
             stderr: Stderr::Piped,
         };
+        let process_spec = spec.confined(process_spec).map_err(start_error)?;
         let mut process = tokio::task::spawn_blocking(move || Process::start(process_spec))
             .await
             .map_err(|e| start_error(format!("start task: {e}")))??;

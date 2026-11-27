@@ -69,6 +69,7 @@ fn spec() -> SessionSpec {
         ask_user: None,
         log_path: None,
         on_spawn: None,
+        confine: None,
     }
 }
 

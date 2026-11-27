@@ -403,6 +403,7 @@ impl Actor {
                 .collect(),
             stderr: Stderr::Piped,
         };
+        let spec = self.spec.confined(spec).map_err(start_error)?;
         let mut process = tokio::task::spawn_blocking(move || Process::start(spec))
             .await
             .map_err(|e| start_error(format!("start task: {e}")))??;
