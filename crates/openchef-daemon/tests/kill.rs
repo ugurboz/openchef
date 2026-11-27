@@ -41,6 +41,18 @@ async fn wait_until(what: &str, limit: Duration, mut cond: impl AsyncFnMut() -> 
     }
 }
 
+/// Bounds one call to the daemon: a hang fails the test with the daemon's log instead
+/// of stalling it until the runner kills it without a trace.
+async fn bounded<T>(paths: &Paths, what: &str, f: impl std::future::Future<Output = T>) -> T {
+    match tokio::time::timeout(Duration::from_secs(20), f).await {
+        Ok(v) => v,
+        Err(_) => panic!(
+            "{what} did not answer in 20 s\ndaemon log:\n{}",
+            daemon_log(paths)
+        ),
+    }
+}
+
 fn daemon_log(paths: &Paths) -> String {
     std::fs::read_to_string(paths.logs.join("daemon.log")).unwrap_or_default()
 }
@@ -123,8 +135,12 @@ impl Drop for Cleanup {
                 .build()
                 .unwrap();
             rt.block_on(async {
-                if let Ok(c) = Client::dial(&socket, "cleanup").await {
-                    let _stopped = c.stop().await;
+                // Bounded: a hung daemon must not hang the test after it failed.
+                let limit = Duration::from_secs(10);
+                if let Ok(Ok(c)) =
+                    tokio::time::timeout(limit, Client::dial(&socket, "cleanup")).await
+                {
+                    let _stopped = tokio::time::timeout(limit, c.stop()).await;
                     c.close();
                 }
             });
@@ -162,19 +178,19 @@ async fn kill_the_daemon_with(stubborn: bool) {
 
     let first = start_daemon(&paths, &flag, stubborn).await;
     let _cleanup = Cleanup(paths.socket.clone());
-    let c = Client::dial(&paths.socket, "e2e").await.unwrap();
-    let t = c
-        .run(&RunParams {
-            prompt: "write done.txt".into(),
-            dir: repo.to_string_lossy().into_owned(),
-            ..RunParams::default()
-        })
+    let c = bounded(&paths, "dial", Client::dial(&paths.socket, "e2e"))
         .await
         .unwrap();
+    let params = RunParams {
+        prompt: "write done.txt".into(),
+        dir: repo.to_string_lossy().into_owned(),
+        ..RunParams::default()
+    };
+    let t = bounded(&paths, "task/run", c.run(&params)).await.unwrap();
     let id: TaskId = t.id.parse().unwrap();
     let mut agents = Vec::new();
     wait_until("the agent process", Duration::from_secs(20), async || {
-        agents = agent_processes(&paths, &id).await;
+        agents = bounded(&paths, "the store", agent_processes(&paths, &id)).await;
         agents.first().is_some_and(is_alive)
     })
     .await;
@@ -189,7 +205,7 @@ async fn kill_the_daemon_with(stubborn: bool) {
     assert!(killed.success(), "kill the daemon");
     wait_until("the daemon to die", Duration::from_secs(10), async || {
         matches!(
-            Client::dial(&paths.socket, "probe").await,
+            bounded(&paths, "dial", Client::dial(&paths.socket, "probe")).await,
             Err(openchef_api::Error::NotRunning)
         )
     })
@@ -241,12 +257,14 @@ async fn kill_the_daemon_with(stubborn: bool) {
 /// carries the recovery note, and no agent process is left.
 async fn assert_finished_in_same_conversation(paths: &Paths, id: &TaskId) {
     let t = id.to_string();
-    let c2 = Client::dial(&paths.socket, "e2e").await.unwrap();
+    let c2 = bounded(paths, "dial", Client::dial(&paths.socket, "e2e"))
+        .await
+        .unwrap();
     let mut detail = None;
     wait_until(
         "the task to finish after the restart",
         Duration::from_secs(30),
-        async || match c2.get(&t).await {
+        async || match bounded(paths, "task/get", c2.get(&t)).await {
             Ok(d) if finished(&d.task.status) => {
                 detail = Some(d);
                 true
