@@ -41,11 +41,13 @@ mod tests {
 
     #[test]
     fn private_temp_and_caches() {
-        let env = sandbox_env(Path::new("/t"), Path::new("/c"));
-        let get = |k: &str| env.iter().find(|(n, _)| n == k).map(|(_, v)| v.as_str());
-        assert_eq!(get("TMPDIR"), Some("/t"));
-        assert_eq!(get("GOCACHE"), Some("/c/go/build"));
-        assert_eq!(get("npm_config_cache"), Some("/c/npm"));
-        assert_eq!(get("CARGO_HOME"), Some("/c/cargo"));
+        let cache = Path::new("/c");
+        let env = sandbox_env(Path::new("/t"), cache);
+        let get = |k: &str| env.iter().find(|(n, _)| n == k).map(|(_, v)| v.clone());
+        let under = |rel: &str| Some(cache.join(rel).to_string_lossy().into_owned());
+        assert_eq!(get("TMPDIR").as_deref(), Some("/t"));
+        assert_eq!(get("GOCACHE"), under("go/build"));
+        assert_eq!(get("npm_config_cache"), under("npm"));
+        assert_eq!(get("CARGO_HOME"), under("cargo"));
     }
 }

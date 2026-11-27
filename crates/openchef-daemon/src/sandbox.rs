@@ -185,11 +185,13 @@ mod tests {
         let t = test_task(&ws, openchef_core::PermissionMode::Manual);
         let (policy, env) = s.base(&t).unwrap_or_else(|e| panic!("{e}"));
         assert!(policy.writable.contains(&ws));
-        let temp = paths.home.join("sandbox/tmp").join(t.id.as_str());
+        let temp = paths.home.join("sandbox").join("tmp").join(t.id.as_str());
         assert!(temp.is_dir() && policy.writable.contains(&temp));
-        let cache = paths.home.join("sandbox/cache/repo-1");
+        let cache = paths.home.join("sandbox").join("cache").join("repo-1");
         assert!(policy.writable.contains(&cache), "per-repository cache");
         assert!(env.contains(&("TMPDIR".to_owned(), temp.to_string_lossy().into_owned())));
+        // Agent state includes Claude's Unix temp directory; Windows has no sandbox yet.
+        #[cfg(unix)]
         assert!(s.session(&t, "claude").is_ok());
         assert!(s.session(&t, "fake").is_err(), "unknown CLIs fail closed");
         let mut none = t.clone();
