@@ -16,7 +16,9 @@ mod step;
 mod turn;
 pub mod verify;
 
-pub use engine::{Clock, Config, Engine, Error, Limits, PoolExhausted, Sleep, SpecFor};
+pub use engine::{
+    Clock, Config, ConfineVerify, Engine, Error, Limits, PoolExhausted, Sleep, SpecFor,
+};
 pub use events::{Discard, Event, EventKind, Sink};
 pub use router::{Agent, Cooldown, NoAgent, Ordered, Router};
 pub use runtimes::{DynRuntime, DynSession, Runtimes};

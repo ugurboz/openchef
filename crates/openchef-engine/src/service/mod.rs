@@ -82,7 +82,13 @@ pub struct Deps {
     pub notify: Option<Notify>,
     /// Sees every engine event before the event log (quota tracking).
     pub tap: Option<Arc<dyn Sink>>,
+    /// Whether this machine can sandbox, checked before a sandboxed task is accepted:
+    /// `--sandbox` fails closed (§21.3). `None` refuses every sandboxed task.
+    pub sandbox_check: Option<SandboxCheck>,
 }
+
+/// Checks that the OS sandbox applies here; the error says why not.
+pub type SandboxCheck = Arc<dyn Fn() -> Result<(), String> + Send + Sync>;
 
 impl std::fmt::Debug for Deps {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -110,6 +116,8 @@ pub struct RunRequest {
     /// `bypassPermissions` is accepted only here, asked for per task, never as a default
     /// (§9.3).
     pub permissions: Option<PermissionMode>,
+    /// Runs the agents and verification inside OpenChef's OS sandbox (§21.3).
+    pub sandbox: bool,
 }
 
 /// Everything known about one task.
@@ -141,6 +149,7 @@ struct Inner {
     engine: Engine,
     events: Arc<EventLog>,
     now: Option<Clock>,
+    sandbox_check: Option<SandboxCheck>,
     default_permissions: Option<DefaultPermissions>,
     approval_timeout: Duration,
     notify: Option<Notify>,
@@ -212,6 +221,7 @@ impl Service {
                     .approval_timeout
                     .unwrap_or(openchef_core::APPROVAL_TIMEOUT),
                 notify: deps.notify,
+                sandbox_check: deps.sandbox_check,
                 life: CancellationToken::new(),
                 tracker: TaskTracker::new(),
                 state: Mutex::new(State::default()),
@@ -290,6 +300,14 @@ impl Service {
         if prompt.is_empty() {
             return Err(Error::Invalid("empty prompt".into()));
         }
+        if req.sandbox {
+            // Fail closed: a sandboxed task is refused, never run unconfined.
+            let Some(check) = &self.inner.sandbox_check else {
+                return Err(Error::Invalid("this daemon cannot sandbox tasks".into()));
+            };
+            check()
+                .map_err(|why| Error::Invalid(format!("--sandbox is not available here: {why}")))?;
+        }
         let repo = Repo::open(&req.dir)
             .await
             .map_err(|e| Error::Invalid(e.to_string()))?;
@@ -305,7 +323,11 @@ impl Service {
             repo_root: repo.root.clone(),
             base_commit: None,
             mode: Mode::Isolated,
-            backend: Backend::Local,
+            backend: if req.sandbox {
+                Backend::Sandbox
+            } else {
+                Backend::Local
+            },
             importance,
             agent_pin: req.agent.filter(|a| !a.is_empty()),
             permissions,

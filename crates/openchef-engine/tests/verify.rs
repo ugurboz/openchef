@@ -31,6 +31,7 @@ fn spec(mode: &str, dir: &tempfile::TempDir) -> Spec {
         env,
         timeout: Some(Duration::from_secs(30)),
         max_output: None,
+        confine: None,
     }
 }
 
@@ -194,6 +195,7 @@ async fn invalid_spec() {
         env: Vec::new(),
         timeout: None,
         max_output: None,
+        confine: None,
     };
     let cases = [
         (
@@ -227,4 +229,28 @@ async fn invalid_spec() {
             "{name}"
         );
     }
+}
+
+/// A sandboxed command starts through its confinement, and a refusal means it never
+/// runs (§21.3: fail closed).
+#[tokio::test(flavor = "multi_thread")]
+async fn confined_commands_start_through_the_sandbox() {
+    let dir = tempfile::tempdir().unwrap();
+    let seen = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let mut s = spec("exit:0", &dir);
+    let flag = std::sync::Arc::clone(&seen);
+    s.confine = Some(std::sync::Arc::new(move |spec| {
+        flag.store(true, std::sync::atomic::Ordering::SeqCst);
+        Ok(spec)
+    }));
+    assert!(run(&s).await.passed);
+    assert!(
+        seen.load(std::sync::atomic::Ordering::SeqCst),
+        "the sandbox wrapped the command"
+    );
+    s.confine = Some(std::sync::Arc::new(|_| Err("no Landlock".to_owned())));
+    let err = verify::run(&s, &CancellationToken::new())
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("sandbox refused"), "{err}");
 }

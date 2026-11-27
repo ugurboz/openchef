@@ -63,6 +63,14 @@ impl Default for Limits {
 /// rules, env, approver, `ask_user`. The engine sets dir, model, effort, log path and
 /// `on_spawn` itself.
 pub type SpecFor = Arc<dyn Fn(&Task, &Agent) -> Result<SessionSpec, String> + Send + Sync>;
+
+/// A sandboxed task's verification sandbox and the environment it adds.
+pub type ConfineVerify = Arc<
+    dyn Fn(&Task) -> Result<(openchef_procs::Confine, Vec<(OsString, OsString)>), String>
+        + Send
+        + Sync,
+>;
+
 /// Learns that a pool ran out of quota until a time (`None`: unknown), so routing can
 /// cool it down (§10.3).
 pub type PoolExhausted = Arc<dyn Fn(&str, Option<OffsetDateTime>) + Send + Sync>;
@@ -84,6 +92,9 @@ pub struct Config {
     pub spec_for: SpecFor,
     /// The environment of verification commands (see [`crate::verify::minimal_env`]).
     pub verify_env: Vec<(OsString, OsString)>,
+    /// The sandbox for a sandboxed task's verification commands, with the variables
+    /// it adds (private `TMPDIR`, redirected caches); `None` runs them unconfined.
+    pub confine_verify: Option<ConfineVerify>,
     /// `~/.openchef/worktrees`.
     pub worktree_root: PathBuf,
     /// `~/.openchef/sessions`.
@@ -116,6 +127,7 @@ impl Config {
             router,
             spec_for,
             verify_env: Vec::new(),
+            confine_verify: None,
             worktree_root: home.join("worktrees"),
             session_root: home.join("sessions"),
             limits: Limits::default(),
