@@ -82,6 +82,13 @@ pub(crate) enum Command {
     Deny(DenyArgs),
     /// Answer an agent's question.
     Answer(AnswerArgs),
+    /// Show each pool's quota windows, health and resets.
+    ///
+    /// Shows what OpenChef knows about each pool's rate-limit windows, from the agents'
+    /// own streams and from usage probes. --refresh probes now (at most every 30
+    /// seconds). Probes read the CLIs' stored logins and call undocumented provider
+    /// endpoints; `openchef quota probes off` stops them.
+    Quota(QuotaArgs),
     /// MCP servers OpenChef gives its agents (started by the agents' CLIs).
     #[command(hide = true)]
     Mcp {
@@ -120,6 +127,28 @@ pub(crate) enum DaemonCommand {
     Stop(JsonFlag),
     /// Show whether the daemon is running (exit status 3 when it is not).
     Status(JsonFlag),
+}
+
+#[derive(Debug, clap::Args)]
+pub(crate) struct QuotaArgs {
+    #[command(subcommand)]
+    pub(crate) command: Option<QuotaCommand>,
+    /// Probe the providers now.
+    #[arg(long)]
+    pub(crate) refresh: bool,
+    /// Print as JSON.
+    #[arg(long)]
+    pub(crate) json: bool,
+}
+
+#[derive(Debug, Subcommand)]
+pub(crate) enum QuotaCommand {
+    /// Turn the usage probes on or off (kept across restarts).
+    Probes {
+        /// On or off.
+        #[arg(value_enum)]
+        state: OnOff,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -270,5 +299,4 @@ pub(crate) const PENDING: &[(&str, &str)] = &[
     ("deferred", "R7"),
     ("report", "R7"),
     ("attach", "R3"),
-    ("quota", "R4"),
 ];

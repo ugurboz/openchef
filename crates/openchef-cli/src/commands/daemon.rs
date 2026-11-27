@@ -47,6 +47,9 @@ pub(crate) fn client_runtime() -> anyhow::Result<tokio::runtime::Runtime> {
 /// The daemon itself, in the foreground (what `daemon start` launches). Interrupt and
 /// terminate signals stop it gracefully.
 fn foreground(paths: &Paths) -> anyhow::Result<i32> {
+    // Read while this process has one thread: Unix platforms cannot tell the local
+    // offset safely once the runtime's threads run. Unknown means UTC.
+    let local_offset = time::UtcOffset::current_local_offset().unwrap_or(time::UtcOffset::UTC);
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
@@ -58,6 +61,7 @@ fn foreground(paths: &Paths) -> anyhow::Result<i32> {
             paths.clone(),
             BuildInfo::current().version.to_owned(),
             shutdown,
+            local_offset,
         );
         let result = openchef_daemon::run(options).await;
         signals.abort();

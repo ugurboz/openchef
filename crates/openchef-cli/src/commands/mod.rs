@@ -5,6 +5,7 @@ pub(crate) mod daemon;
 pub(crate) mod doctor;
 pub(crate) mod init;
 pub(crate) mod mcp;
+pub(crate) mod quota;
 pub(crate) mod tasks;
 pub(crate) mod version;
 
@@ -78,6 +79,7 @@ pub(crate) fn dispatch(
             &args,
             tasks::Action::Retry,
         ),
+        Some(Command::Quota(args)) => quota::run(out, &deps.paths(cli.home.as_ref())?, &args),
         Some(Command::Mcp {
             command: McpCommand::AskUser(args),
         }) => mcp::ask_user(deps, &deps.paths(cli.home.as_ref())?, &args),
