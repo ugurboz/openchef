@@ -3,15 +3,21 @@
 //! local socket and owns every agent process. CLIs and the TUI are clients; they come
 //! and go without stopping it.
 
+mod app;
+mod approver;
+mod env;
 mod lock;
 mod server;
 mod spawn;
+mod tasks;
 
 use std::path::PathBuf;
 
+pub use app::{agents, daemon_options};
 pub use lock::Lock;
-pub use server::{Conn, Method, OnStop, Options, STOP_TIMEOUT, run};
+pub use server::{Conn, Init, Method, OnStop, Options, STOP_TIMEOUT, Services, run};
 pub use spawn::{Detached, start_detached};
+pub use tasks::{MAX_REPLAY, task_methods};
 
 /// Why the daemon could not start, serve or stop.
 #[derive(Debug, thiserror::Error)]
@@ -29,6 +35,9 @@ pub enum Error {
         /// The limit.
         max: usize,
     },
+    /// Building the daemon's services failed.
+    #[error("daemon: {0}")]
+    Init(String),
     /// Stopping the sessions failed or took too long.
     #[error("daemon: stop: {0}")]
     Stop(String),

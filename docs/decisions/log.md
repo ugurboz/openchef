@@ -646,3 +646,23 @@ where they name Go packages or types, read the matching crate (`internal/<x>` �
   amended in R4.5/R4.6 for sandboxed runs; `openchef doctor` probes that each sandbox
   applies.
 
+
+## D-033 — Interim approver until approvals: mode-aware, no commands
+*2026-11-28 · R3.6*
+
+- **Context:** R3 runs real agents end to end, but the evaluator, approval queue and
+  `ask_user` arrive with R4. Go M3 forced `acceptEdits` on every session; the Rust
+  service already stores a permission mode per task (`--permission-mode`), so the
+  interim policy must not contradict it.
+- **Decision:** the daemon's approver allows file changes only inside the task's
+  worktree and outside `.git`, `.openchef` and `.claude` (symlinks resolved, Windows
+  aliases refused: `openchef-permissions::pathguard`), refuses every change in `plan`,
+  refuses shell commands and other tools in every mode except `bypassPermissions`, and
+  refuses mode changes. Questions get a "make the reasonable choice and say so" answer.
+  `bypassPermissions` sessions open only in an isolated worktree. The session's mode is
+  the task's mode, so the adapters' native mapping (D-008, D-003, D-015) applies.
+- **Challenge:** "refusing commands makes agents useless": OpenChef runs the step's
+  verification itself, so a step completes without the agent running commands, as in
+  Go M3; users who want commands ask for `bypassPermissions` per task.
+- **Consequences:** R4.2 replaces the approver with the evaluator and the queue; the
+  path guard stays as the invariant check under it.

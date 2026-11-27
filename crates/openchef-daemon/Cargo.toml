@@ -14,10 +14,22 @@ path = "src/bin/daemon-test-helper.rs"
 test = false
 doc = false
 
+[[bin]]
+name = "e2e-helper"
+path = "src/bin/e2e-helper.rs"
+test = false
+doc = false
+
 [dependencies]
 openchef-api.workspace = true
 openchef-config.workspace = true
+openchef-core.workspace = true
+openchef-engine.workspace = true
+openchef-permissions.workspace = true
+openchef-procs.workspace = true
 openchef-runtime.workspace = true
+openchef-store.workspace = true
+serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 time.workspace = true
@@ -26,6 +38,7 @@ tokio-util.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros", "time"] }
 
 [lints]
 workspace = true

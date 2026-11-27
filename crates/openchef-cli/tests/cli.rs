@@ -81,6 +81,8 @@ fn fake_env(installed: &[&'static str], logged_in: &[&'static str]) -> Env {
             detector,
             home: Some(home),
             interactive: false,
+            start_daemon: None,
+            cwd: None,
         },
         paths,
         _dir: dir,
@@ -288,12 +290,9 @@ fn version() {
 #[test]
 fn pending_and_unknown_commands() {
     let env = fake_env(&[], &[]);
-    let (code, _, err) = run_with(
-        &env,
-        &["run", "add rate limiting", "--verify", "cargo test"],
-    );
+    let (code, _, err) = run_with(&env, &["approve", "k3m9x2q7ab"]);
     assert_eq!(code, exit::USAGE);
-    assert!(err.contains("not implemented yet (R3)"), "{err}");
+    assert!(err.contains("not implemented yet (R4)"), "{err}");
     let (code, _, err) = run_with(&env, &["frobnicate"]);
     assert_eq!(code, exit::USAGE);
     assert!(err.contains("unknown command"), "{err}");

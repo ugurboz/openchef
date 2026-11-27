@@ -5,18 +5,22 @@
 mod cli;
 mod commands;
 mod output;
+mod render;
 
 use std::ffi::OsString;
 use std::io::Write;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use clap::Parser as _;
 use openchef_config::{Detector, Paths};
 
 pub use commands::version::BuildInfo;
 
+/// Starts a background daemon when a command needs one.
+pub type StartDaemon = Arc<dyn Fn(&Paths) -> anyhow::Result<()> + Send + Sync>;
+
 /// The environment commands depend on, replaceable in tests.
-#[derive(Debug)]
 pub struct Deps {
     /// Finds and inspects agent CLIs.
     pub detector: Detector,
@@ -24,6 +28,22 @@ pub struct Deps {
     pub home: Option<PathBuf>,
     /// Whether questions may be asked on the terminal.
     pub interactive: bool,
+    /// Starts the daemon for `run`; `None` launches this executable's `daemon run`
+    /// detached.
+    pub start_daemon: Option<StartDaemon>,
+    /// The working directory `run` acts on; `None` is the process's.
+    pub cwd: Option<PathBuf>,
+}
+
+impl std::fmt::Debug for Deps {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Deps")
+            .field("detector", &self.detector)
+            .field("home", &self.home)
+            .field("interactive", &self.interactive)
+            .field("cwd", &self.cwd)
+            .finish_non_exhaustive()
+    }
 }
 
 impl Deps {
@@ -35,6 +55,8 @@ impl Deps {
             detector: Detector::system(),
             home: None,
             interactive: std::io::stdin().is_terminal(),
+            start_daemon: None,
+            cwd: None,
         }
     }
 
@@ -54,6 +76,9 @@ pub mod exit {
     pub const FAILURE: i32 = 1;
     /// Bad usage, or a command that is not built yet.
     pub const USAGE: i32 = 2;
+    /// `daemon status`: no daemon is running (as `systemctl status` for an inactive
+    /// unit).
+    pub const NOT_RUNNING: i32 = 3;
 }
 
 /// Runs the program with `args` (including the program name) and returns the exit

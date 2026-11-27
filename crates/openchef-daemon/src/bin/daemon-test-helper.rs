@@ -21,6 +21,7 @@ async fn main() -> ExitCode {
         version: "test".to_owned(),
         methods: HashMap::new(),
         on_stop: None,
+        init: None,
         shutdown: CancellationToken::new(),
     };
     match run(options).await {

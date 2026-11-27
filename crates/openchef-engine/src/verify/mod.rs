@@ -46,20 +46,38 @@ pub struct Spec {
 
 /// The outcome of a run that started. A failing command is an outcome with `passed`
 /// false, not an error.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Outcome {
     /// Exit status 0 within the timeout.
     pub passed: bool,
     /// The exit status; `None` when stopped by a signal or the timeout.
+    #[serde(rename = "exitCode", default, skip_serializing_if = "Option::is_none")]
     pub exit_code: Option<i32>,
     /// The timeout stopped it.
+    #[serde(rename = "timedOut")]
     pub timed_out: bool,
     /// stdout and stderr in arrival order (approximate across the two pipes), bounded.
     pub output: String,
     /// Output was dropped from the middle.
     pub truncated: bool,
     /// Wall time.
+    #[serde(rename = "durationMs", with = "duration_ms")]
     pub duration: Duration,
+}
+
+/// A duration as whole milliseconds on the wire.
+mod duration_ms {
+    use std::time::Duration;
+
+    use serde::{Deserialize as _, Deserializer, Serializer};
+
+    pub(super) fn serialize<S: Serializer>(d: &Duration, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_u64(u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
+    }
+
+    pub(super) fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Duration, D::Error> {
+        u64::deserialize(d).map(Duration::from_millis)
+    }
 }
 
 impl Outcome {

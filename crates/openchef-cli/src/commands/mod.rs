@@ -1,7 +1,9 @@
 //! One module per command.
 
+pub(crate) mod daemon;
 pub(crate) mod doctor;
 pub(crate) mod init;
+pub(crate) mod tasks;
 pub(crate) mod version;
 
 use std::io::Write;
@@ -29,6 +31,24 @@ pub(crate) fn dispatch(
             doctor::run(out, deps, &deps.paths(cli.home.as_ref())?, json)
         }
         Some(Command::Init(args)) => init::run(out, deps, &deps.paths(cli.home.as_ref())?, &args),
+        Some(Command::Daemon { command }) => {
+            daemon::run(out, &deps.paths(cli.home.as_ref())?, &command)
+        }
+        Some(Command::Run(args)) => tasks::run(out, deps, &deps.paths(cli.home.as_ref())?, &args),
+        Some(Command::Status(args)) => tasks::status(out, &deps.paths(cli.home.as_ref())?, &args),
+        Some(Command::Logs(args)) => tasks::logs(out, &deps.paths(cli.home.as_ref())?, &args),
+        Some(Command::Cancel(args)) => tasks::act(
+            out,
+            &deps.paths(cli.home.as_ref())?,
+            &args,
+            tasks::Action::Cancel,
+        ),
+        Some(Command::Retry(args)) => tasks::act(
+            out,
+            &deps.paths(cli.home.as_ref())?,
+            &args,
+            tasks::Action::Retry,
+        ),
         Some(Command::Pending(words)) => {
             let name = words.first().map_or("", String::as_str);
             match PENDING.iter().find(|(n, _)| *n == name) {
