@@ -830,9 +830,15 @@ version = "0.1.0"
 name = "openchef-engine"
 version = "0.1.0"
 dependencies = [
+ "openchef-core",
+ "openchef-fake",
+ "openchef-gitws",
  "openchef-procs",
+ "openchef-runtime",
+ "openchef-store",
  "tempfile",
  "thiserror",
+ "time",
  "tokio",
  "tokio-util",
 ]
