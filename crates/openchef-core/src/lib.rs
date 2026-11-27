@@ -11,6 +11,9 @@
 #[macro_use]
 mod macros;
 
+#[doc(hidden)]
+pub use serde as __serde;
+
 mod approval;
 mod error;
 mod id;
