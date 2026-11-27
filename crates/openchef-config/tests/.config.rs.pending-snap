@@ -1,3 +1,0 @@
-{"run_id":"32a7c5fe-e654-4b56-9ae2-9b1d5f00d878","line":80,"new":{"module_name":"config","snapshot_name":"parse_rejects_unknown_keys_with_position","metadata":{"source":"crates/openchef-config/tests/config.rs","assertion_line":80,"expression":"msg"},"snapshot":"invalid configuration:\n  - line 38, column 1: unknown key \"agents.opus2.model_id\""},"old":{"module_name":"config","metadata":{},"snapshot":"invalid configuration:\n  - line 46, column 1: unknown key \"agents.opus2.model_id\""}}
-{"run_id":"1195858a-617d-4f3d-b653-62de85a92582","line":80,"new":null,"old":null}
-{"run_id":"6b993468-6658-4ae8-b3ea-3331009a59d2","line":85,"new":null,"old":null}
