@@ -10,6 +10,7 @@ mod attempts;
 mod db;
 mod error;
 mod migrate;
+mod quota;
 mod sql;
 mod tasks;
 
@@ -18,4 +19,5 @@ pub use attempts::{NewAttempt, NewSession};
 pub use db::{Clock, OpenOptions, Store};
 pub use error::Error;
 pub use migrate::Migration;
+pub use quota::{ObservationRow, Spend};
 pub use tasks::{StepChange, TaskChange, TaskFilter};
