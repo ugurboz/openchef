@@ -8,3 +8,4 @@
 # insta snapshot review leftovers
 *.pending-snap
 *.snap.new
+/spikes/*/report.md

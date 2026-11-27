@@ -1,5 +1,5 @@
 [package]
-name = "openchef-cli"
+name = "openchef"
 description = "The openchef binary: command line, daemon entry and hidden helpers."
 version.workspace = true
 edition.workspace = true
@@ -30,3 +30,7 @@ tempfile.workspace = true
 
 [lints]
 workspace = true
+
+[package.metadata.dist]
+# Release packaging ships only the openchef binary (architecture §19, R8).
+dist = true
