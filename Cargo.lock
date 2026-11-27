@@ -1545,6 +1545,12 @@ dependencies = [
 [[package]]
 name = "openchef-router"
 version = "0.1.0"
+dependencies = [
+ "openchef-config",
+ "openchef-core",
+ "openchef-quota",
+ "thiserror",
+]
 
 [[package]]
 name = "openchef-runtime"
