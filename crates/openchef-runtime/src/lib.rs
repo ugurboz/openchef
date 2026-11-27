@@ -4,6 +4,7 @@
 //! [`linerpc`] (JSON-RPC over newline-delimited JSON) and [`TurnSender`] (a turn's event
 //! stream that never blocks its producer).
 
+pub mod agy;
 mod approval;
 pub mod claude;
 pub mod codex;
@@ -11,6 +12,7 @@ mod error;
 mod event;
 pub mod linerpc;
 pub mod rawlog;
+pub mod schema;
 mod spec;
 mod turn;
 
