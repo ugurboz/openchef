@@ -572,6 +572,17 @@ version = "0.1.0"
 [[package]]
 name = "openchef-runtime"
 version = "0.1.0"
+dependencies = [
+ "openchef-core",
+ "openchef-procs",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "time",
+ "tokio",
+ "tokio-util",
+]
 
 [[package]]
 name = "openchef-sandbox"
