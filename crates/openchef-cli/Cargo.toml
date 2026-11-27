@@ -1,0 +1,16 @@
+[package]
+name = "openchef-cli"
+description = "The openchef binary: command line, daemon entry and hidden helpers."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[[bin]]
+name = "openchef"
+path = "src/main.rs"
+
+[lints]
+workspace = true

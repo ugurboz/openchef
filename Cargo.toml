@@ -1,0 +1,94 @@
+[workspace]
+members = ["crates/*"]
+resolver = "3"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.100"
+license = "Apache-2.0"
+repository = "https://github.com/ugurboz/openchef"
+
+# Every third-party crate the architecture intends (§16). Crates opt in with
+# `name.workspace = true`; adding a new entry needs a reason in the PR (AGENTS.md §3).
+[workspace.dependencies]
+anyhow = "1.0.105"
+brush-parser = "0.5.0"
+clap = { version = "4.6.10", features = ["derive"] }
+crossterm = "0.29.0"
+dialoguer = "0.12.0"
+jsonschema = "0.63.2"
+landlock = "0.4.8"
+libc = "0.2.191"
+nix = "0.32.0"
+ratatui = "0.30.2"
+reqwest = { version = "0.13.5", default-features = false }
+rusqlite = { version = "0.43.0", features = ["bundled"] }
+schemars = "1.2.3"
+seccompiler = "0.5.0"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+sha2 = "0.11.2"
+thiserror = "2.0.21"
+time = "0.3.55"
+tokio = { version = "1.54.1", features = ["rt-multi-thread", "macros", "process", "io-util", "sync", "time", "net", "signal", "fs"] }
+tokio-util = "0.7.20"
+toml = "1.2.3"
+tracing = "0.1.44"
+tracing-subscriber = "0.3.23"
+uuid = { version = "1.29.3", features = ["v4", "serde"] }
+windows-sys = "0.61.2"
+# tests
+insta = "1.49.0"
+proptest = "1.12.0"
+tempfile = "3.27.0"
+# workspace crates
+openchef-api = { path = "crates/openchef-api" }
+openchef-config = { path = "crates/openchef-config" }
+openchef-core = { path = "crates/openchef-core" }
+openchef-daemon = { path = "crates/openchef-daemon" }
+openchef-engine = { path = "crates/openchef-engine" }
+openchef-fake = { path = "crates/openchef-fake" }
+openchef-gitws = { path = "crates/openchef-gitws" }
+openchef-permissions = { path = "crates/openchef-permissions" }
+openchef-procs = { path = "crates/openchef-procs" }
+openchef-quota = { path = "crates/openchef-quota" }
+openchef-router = { path = "crates/openchef-router" }
+openchef-runtime = { path = "crates/openchef-runtime" }
+openchef-sandbox = { path = "crates/openchef-sandbox" }
+openchef-store = { path = "crates/openchef-store" }
+openchef-tui = { path = "crates/openchef-tui" }
+
+# D-030. `unsafe_code` is denied here and re-allowed only at the crate root of
+# openchef-procs and openchef-sandbox.
+[workspace.lints.rust]
+unsafe_code = "deny"
+unused_must_use = "deny"
+unused_results = "warn"
+missing_docs = "warn"
+unreachable_pub = "warn"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+todo = "deny"
+unimplemented = "deny"
+dbg_macro = "deny"
+print_stdout = "warn"
+print_stderr = "warn"
+let_underscore_must_use = "deny"
+wildcard_enum_match_arm = "warn"
+undocumented_unsafe_blocks = "deny"
+# pedantic lints that only add noise
+module_name_repetitions = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+must_use_candidate = "allow"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "symbols"

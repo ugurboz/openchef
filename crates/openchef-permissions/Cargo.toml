@@ -1,0 +1,12 @@
+[package]
+name = "openchef-permissions"
+description = "Permission rules, shell command parsing, evaluator and risk classes."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[lints]
+workspace = true

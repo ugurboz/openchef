@@ -1,0 +1,8 @@
+[profile.default]
+# A hanging test is a bug; fail it instead of waiting forever.
+slow-timeout = { period = "30s", terminate-after = 4 }
+
+[profile.ci]
+fail-fast = false
+retries = 0
+slow-timeout = { period = "60s", terminate-after = 5 }

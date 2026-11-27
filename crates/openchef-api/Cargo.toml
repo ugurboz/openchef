@@ -1,0 +1,12 @@
+[package]
+name = "openchef-api"
+description = "Daemon JSON-RPC types, server and client."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[lints]
+workspace = true

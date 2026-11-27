@@ -1,0 +1,55 @@
+name: Stress
+
+# Repeats timing-sensitive tests many times on every OS to catch flakiness that a single
+# run cannot (architecture §18). Runs when those crates change, or on demand.
+on:
+  pull_request:
+    paths:
+      - "crates/openchef-procs/**"
+      - "crates/openchef-store/**"
+      - "crates/openchef-runtime/**"
+      - "crates/openchef-engine/**"
+      - "crates/openchef-daemon/**"
+      - "crates/openchef-sandbox/**"
+      - ".github/workflows/stress.yml"
+  workflow_dispatch:
+    inputs:
+      count:
+        description: "Repetitions per test"
+        default: "50"
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: stress-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  stress:
+    name: Stress (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Toolchain (from rust-toolchain.toml)
+        run: rustup show active-toolchain || rustup toolchain install
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - uses: taiki-e/install-action@073e1fd0bc889c9aee68dbaaa927cde1b5653a83 # v2.90.11
+        with:
+          tool: cargo-nextest
+      - name: Stress
+        shell: bash
+        env:
+          COUNT: ${{ inputs.count || '50' }}
+        run: |
+          cargo nextest run --workspace --profile ci --locked --no-tests=pass --stress-count "$COUNT" \
+            -E 'package(openchef-procs) | package(openchef-store) | package(openchef-runtime) | package(openchef-engine) | package(openchef-daemon) | package(openchef-sandbox)'
