@@ -80,6 +80,8 @@ pub struct Deps {
     pub approval_timeout: Option<Duration>,
     /// Tells the user a request waits while nobody watches its task.
     pub notify: Option<Notify>,
+    /// Sees every engine event before the event log (quota tracking).
+    pub tap: Option<Arc<dyn Sink>>,
 }
 
 impl std::fmt::Debug for Deps {
@@ -172,6 +174,16 @@ pub fn title(prompt: &str) -> String {
     format!("{}…", cut.trim_end())
 }
 
+/// Delivers every event to a tap, then to the event log.
+struct Tee(Arc<dyn Sink>, Arc<EventLog>);
+
+impl Sink for Tee {
+    fn publish(&self, event: Event) {
+        self.0.publish(event.clone());
+        self.1.publish(event);
+    }
+}
+
 impl Service {
     /// Builds a service; call [`Service::start`] to resume earlier work.
     ///
@@ -182,7 +194,10 @@ impl Service {
         let on_fail: OnFail = deps.on_fail.unwrap_or_else(|| Arc::new(|_| {}));
         let events = Arc::new(EventLog::new(deps.event_dir, on_fail));
         let mut cfg = deps.engine;
-        cfg.sink = events.clone();
+        cfg.sink = match deps.tap {
+            Some(tap) => Arc::new(Tee(tap, events.clone())),
+            None => events.clone(),
+        };
         let now = cfg.now.clone();
         let store = cfg.store.clone();
         let engine = Engine::new(cfg)?;

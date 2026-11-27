@@ -246,6 +246,7 @@ async fn services(paths: Paths, runtime: ProcRuntime) -> Result<Services, String
         on_fail: None,
         approval_timeout: None,
         notify: None,
+        tap: None,
     })
     .map_err(|e| e.to_string())?;
     let killed = service.start().await.map_err(|e| e.to_string())?;

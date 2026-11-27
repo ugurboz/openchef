@@ -162,6 +162,7 @@ impl Env {
             on_fail: None,
             approval_timeout: None,
             notify: None,
+            tap: None,
         };
         tweak(&mut deps);
         Service::new(deps).unwrap()
