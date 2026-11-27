@@ -8,5 +8,21 @@ license.workspace = true
 repository.workspace = true
 publish = false
 
+[[bin]]
+name = "verify-test-helper"
+path = "src/bin/verify-test-helper.rs"
+test = false
+doc = false
+
+[dependencies]
+openchef-procs.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["rt", "sync", "time", "macros"] }
+tokio-util.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time"] }
+
 [lints]
 workspace = true
