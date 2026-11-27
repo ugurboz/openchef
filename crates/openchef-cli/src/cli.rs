@@ -47,6 +47,29 @@ pub(crate) enum Command {
     /// Writes one pool per subscription and agents and routing for the CLIs that are
     /// usable. Use --plan to record your subscription tier, e.g. --plan claude=max.
     Init(InitArgs),
+    /// Start, stop or inspect the background daemon.
+    ///
+    /// The daemon runs every agent session. It starts automatically when a task needs
+    /// it; these commands control it directly.
+    Daemon {
+        #[command(subcommand)]
+        command: DaemonCommand,
+    },
+    /// Run one step in a new worktree, verify it and commit it.
+    ///
+    /// Runs the prompt as a single step on a routed agent in a worktree of the current
+    /// repository, then verifies it with --verify and commits the result on branch
+    /// openchef/<task>. Output streams live; Ctrl-C detaches without cancelling (use
+    /// `openchef cancel`).
+    Run(RunArgs),
+    /// List tasks, or show one task's steps and attempts.
+    Status(StatusArgs),
+    /// Show a task's events; -f follows them live.
+    Logs(LogsArgs),
+    /// Cancel a task and stop its agent.
+    Cancel(TaskArgs),
+    /// Retry a task that needs attention or waits for quota.
+    Retry(TaskArgs),
     /// Not built yet.
     #[command(external_subcommand)]
     Pending(Vec<String>),
@@ -68,6 +91,88 @@ pub(crate) struct InitArgs {
     pub(crate) quota_probes: Option<OnOff>,
 }
 
+#[derive(Debug, Subcommand)]
+pub(crate) enum DaemonCommand {
+    /// Run the daemon in the foreground (what `daemon start` launches).
+    #[command(hide = true)]
+    Run,
+    /// Start the daemon in the background.
+    Start(JsonFlag),
+    /// Stop the daemon; running tasks resume on next start.
+    Stop(JsonFlag),
+    /// Show whether the daemon is running (exit status 3 when it is not).
+    Status(JsonFlag),
+}
+
+#[derive(Debug, clap::Args)]
+pub(crate) struct JsonFlag {
+    /// Print the result as JSON.
+    #[arg(long)]
+    pub(crate) json: bool,
+}
+
+#[derive(Debug, clap::Args)]
+pub(crate) struct RunArgs {
+    /// What to do.
+    #[arg(required = true, num_args = 1.., value_name = "PROMPT")]
+    pub(crate) prompt: Vec<String>,
+    /// Command that must pass in the workspace, e.g. "cargo test".
+    #[arg(long, value_name = "COMMAND")]
+    pub(crate) verify: Option<String>,
+    /// Pin an agent from config.toml instead of routing.
+    #[arg(long, value_name = "NAME")]
+    pub(crate) agent: Option<String>,
+    /// Permission mode for this task (manual, acceptEdits, plan, auto, dontAsk,
+    /// bypassPermissions).
+    #[arg(long, value_name = "MODE")]
+    pub(crate) permission_mode: Option<String>,
+    /// Print only the final result.
+    #[arg(short, long)]
+    pub(crate) quiet: bool,
+    /// Return immediately; follow with `openchef logs <task> -f`.
+    #[arg(long)]
+    pub(crate) detach: bool,
+    /// Print events as JSON lines.
+    #[arg(long)]
+    pub(crate) json: bool,
+}
+
+#[derive(Debug, clap::Args)]
+pub(crate) struct StatusArgs {
+    /// A task id; without one, tasks are listed.
+    pub(crate) task: Option<String>,
+    /// Include finished tasks.
+    #[arg(long)]
+    pub(crate) all: bool,
+    /// Show at most this many tasks.
+    #[arg(long, default_value_t = 20)]
+    pub(crate) limit: u32,
+    /// Print as JSON.
+    #[arg(long)]
+    pub(crate) json: bool,
+}
+
+#[derive(Debug, clap::Args)]
+pub(crate) struct LogsArgs {
+    /// The task id.
+    pub(crate) task: String,
+    /// Keep following new events.
+    #[arg(short, long)]
+    pub(crate) follow: bool,
+    /// Print events as JSON lines.
+    #[arg(long)]
+    pub(crate) json: bool,
+}
+
+#[derive(Debug, clap::Args)]
+pub(crate) struct TaskArgs {
+    /// The task id.
+    pub(crate) task: String,
+    /// Print the task as JSON.
+    #[arg(long)]
+    pub(crate) json: bool,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub(crate) enum OnOff {
     On,
@@ -77,20 +182,14 @@ pub(crate) enum OnOff {
 /// Commands of §12.1 that later milestones build, and the milestone that does.
 pub(crate) const PENDING: &[(&str, &str)] = &[
     ("pipeline", "R5"),
-    ("run", "R3"),
-    ("status", "R3"),
-    ("logs", "R3"),
     ("approve", "R4"),
     ("deny", "R4"),
     ("answer", "R4"),
     ("approvals", "R4"),
-    ("retry", "R3"),
-    ("cancel", "R3"),
     ("merge", "R5"),
     ("plan", "R5"),
     ("deferred", "R7"),
     ("report", "R7"),
     ("attach", "R3"),
     ("quota", "R4"),
-    ("daemon", "R3"),
 ];

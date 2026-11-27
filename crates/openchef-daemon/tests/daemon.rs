@@ -78,6 +78,7 @@ mod unix {
             version: "test".into(),
             methods,
             on_stop,
+            init: None,
             shutdown: shutdown.clone(),
         };
         let done = tokio::spawn(run(options));
@@ -125,6 +126,7 @@ mod unix {
             version: "x".into(),
             methods: HashMap::new(),
             on_stop: None,
+            init: None,
             shutdown: CancellationToken::new(),
         };
         assert!(
@@ -254,6 +256,7 @@ mod unix {
             version: "x".into(),
             methods: HashMap::new(),
             on_stop: None,
+            init: None,
             shutdown: CancellationToken::new(),
         };
         assert!(matches!(

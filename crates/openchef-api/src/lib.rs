@@ -4,6 +4,7 @@
 //! internal in v1: documented, not promised stable.
 
 mod client;
+mod tasks;
 pub mod transport;
 
 use std::path::PathBuf;
@@ -11,6 +12,7 @@ use std::path::PathBuf;
 pub use client::Client;
 use openchef_runtime::linerpc::RpcError;
 use serde::{Deserialize, Serialize};
+pub use tasks::*;
 use time::OffsetDateTime;
 
 /// The protocol version a client and the daemon must agree on.

@@ -76,6 +76,27 @@ pub type Method = Arc<
 /// Runs once on shutdown, before connections close, to stop sessions gracefully.
 pub type OnStop = Box<dyn FnOnce() -> BoxFuture<'static, Result<(), String>> + Send>;
 
+/// What [`Init`] adds to the daemon.
+#[derive(Default)]
+pub struct Services {
+    /// API methods, added to [`Options::methods`].
+    pub methods: HashMap<String, Method>,
+    /// Runs on shutdown before [`Options::on_stop`].
+    pub on_stop: Option<OnStop>,
+}
+
+impl std::fmt::Debug for Services {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Services")
+            .field("methods", &self.methods.keys().collect::<Vec<_>>())
+            .finish_non_exhaustive()
+    }
+}
+
+/// Builds the daemon's services once it holds the single-instance lock, so only one
+/// daemon ever opens the state database or recovers earlier work (§5.3).
+pub type Init = Box<dyn FnOnce() -> BoxFuture<'static, Result<Services, String>> + Send>;
+
 /// How to run the daemon.
 pub struct Options {
     /// Where everything lives.
@@ -86,6 +107,8 @@ pub struct Options {
     pub methods: HashMap<String, Method>,
     /// Bounded by [`STOP_TIMEOUT`].
     pub on_stop: Option<OnStop>,
+    /// Runs after the lock is taken and before the socket opens.
+    pub init: Option<Init>,
     /// Stops the daemon from outside (signals, tests).
     pub shutdown: CancellationToken,
 }
@@ -265,8 +288,9 @@ pub async fn run(options: Options) -> Result<(), Error> {
     let Options {
         paths,
         version,
-        methods,
+        mut methods,
         on_stop,
+        init,
         shutdown,
     } = options;
     std::fs::create_dir_all(&paths.home)
@@ -280,9 +304,37 @@ pub async fn run(options: Options) -> Result<(), Error> {
         });
     }
     let mut lock = Lock::acquire(&paths.lock)?;
+    let on_stop = match init {
+        None => on_stop,
+        Some(init) => match init().await {
+            Ok(services) => {
+                methods.extend(services.methods);
+                chain(services.on_stop, on_stop)
+            }
+            Err(e) => {
+                let released = lock.release();
+                drop(released); // the init failure is the error that matters
+                return Err(Error::Init(e));
+            }
+        },
+    };
     let served = serve(paths, version, methods, on_stop, shutdown).await;
     let released = lock.release();
     served.and(released)
+}
+
+/// Runs `first`, then `second`, keeping the first error.
+fn chain(first: Option<OnStop>, second: Option<OnStop>) -> Option<OnStop> {
+    match (first, second) {
+        (None, other) | (other, None) => other,
+        (Some(a), Some(b)) => Some(Box::new(move || {
+            Box::pin(async move {
+                let first = a().await;
+                let second = b().await;
+                first.and(second)
+            })
+        })),
+    }
 }
 
 #[cfg(unix)]

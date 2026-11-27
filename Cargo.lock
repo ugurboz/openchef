@@ -798,16 +798,28 @@ dependencies = [
  "anyhow",
  "clap",
  "insta",
+ "openchef-api",
  "openchef-config",
+ "openchef-core",
+ "openchef-daemon",
+ "openchef-engine",
+ "openchef-fake",
+ "openchef-runtime",
+ "openchef-store",
  "serde",
  "serde_json",
  "tempfile",
+ "time",
+ "tokio",
+ "tokio-util",
 ]
 
 [[package]]
 name = "openchef-api"
 version = "0.1.0"
 dependencies = [
+ "openchef-core",
+ "openchef-engine",
  "openchef-runtime",
  "serde",
  "serde_json",
@@ -849,7 +861,13 @@ version = "0.1.0"
 dependencies = [
  "openchef-api",
  "openchef-config",
+ "openchef-core",
+ "openchef-engine",
+ "openchef-permissions",
+ "openchef-procs",
  "openchef-runtime",
+ "openchef-store",
+ "serde",
  "serde_json",
  "tempfile",
  "thiserror",
@@ -903,6 +921,10 @@ dependencies = [
 [[package]]
 name = "openchef-permissions"
 version = "0.1.0"
+dependencies = [
+ "tempfile",
+ "thiserror",
+]
 
 [[package]]
 name = "openchef-procs"
