@@ -21,7 +21,7 @@ use std::time::Duration;
 
 use openchef_config::Paths;
 use openchef_core::{PermissionMode, Task};
-use openchef_daemon::{Init, Options, Services, run, task_methods};
+use openchef_daemon::{Init, Options, Services, run, service_methods};
 use openchef_engine::service::{Deps, Service};
 use openchef_engine::{Agent, Config, DynRuntime, Ordered, Runtimes, SpecFor};
 use openchef_procs::{Process, Spec};
@@ -258,7 +258,7 @@ async fn services(paths: Paths, runtime: ProcRuntime) -> Result<Services, String
     }
     let stopping = service.clone();
     Ok(Services {
-        methods: task_methods(service),
+        methods: service_methods(service),
         on_stop: Some(Box::new(move || {
             Box::pin(async move {
                 stopping

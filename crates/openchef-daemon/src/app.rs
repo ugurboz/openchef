@@ -21,7 +21,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::approver::WorkspaceApprover;
 use crate::env::session_env;
-use crate::{Init, OnStop, Options, STOP_TIMEOUT, Services, task_methods};
+use crate::{Init, OnStop, Options, STOP_TIMEOUT, Services, service_methods};
 
 /// How long a pool cools down when it ran out of quota without saying until when.
 const UNKNOWN_RESET: Duration = Duration::from_hours(1);
@@ -89,7 +89,7 @@ async fn services(paths: Paths, version: String) -> Result<Services, String> {
         })
     };
     Ok(Services {
-        methods: task_methods(service),
+        methods: service_methods(service),
         on_stop: Some(on_stop),
     })
 }

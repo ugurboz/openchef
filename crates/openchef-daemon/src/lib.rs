@@ -4,6 +4,7 @@
 //! and go without stopping it.
 
 mod app;
+mod approvals;
 mod approver;
 mod env;
 mod lock;
@@ -14,6 +15,7 @@ mod tasks;
 use std::path::PathBuf;
 
 pub use app::{agents, daemon_options};
+pub use approvals::{approval_methods, service_methods};
 pub use lock::Lock;
 pub use server::{Conn, Init, Method, OnStop, Options, STOP_TIMEOUT, Services, run};
 pub use spawn::{Detached, start_detached};

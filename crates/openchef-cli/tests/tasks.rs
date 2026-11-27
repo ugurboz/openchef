@@ -16,7 +16,7 @@ use std::time::{Duration, Instant};
 use openchef_cli::{Deps, StartDaemon, exit, run};
 use openchef_config::{Detector, Paths};
 use openchef_core::{PermissionMode, Task};
-use openchef_daemon::{Options, Services, task_methods};
+use openchef_daemon::{Options, Services, service_methods};
 use openchef_engine::service::{Deps as ServiceDeps, Service};
 use openchef_engine::{Agent, Config, DynRuntime, Ordered, Runtimes};
 use openchef_fake::{FakeRuntime, Turn};
@@ -165,7 +165,7 @@ fn start_daemon(paths: &Paths, claude: &FakeRuntime) -> Running {
                     let _killed = service.start().await.map_err(|e| e.to_string())?;
                     let stopping = service.clone();
                     Ok(Services {
-                        methods: task_methods(service),
+                        methods: service_methods(service),
                         on_stop: Some(Box::new(move || {
                             Box::pin(async move {
                                 stopping

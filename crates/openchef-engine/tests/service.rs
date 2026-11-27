@@ -555,7 +555,7 @@ async fn ask_and_decide() {
         let notes = Arc::clone(&notes);
         e.service_deps(move |d| {
             d.notify = Some(Arc::new(move |_: &str, body: &str| {
-                notes.lock().unwrap().push(body.to_owned())
+                notes.lock().unwrap().push(body.to_owned());
             }));
         })
     };
@@ -667,12 +667,15 @@ async fn ask_withdrawn_when_agent_stops() {
         ),
         cancel.clone(),
     );
-    let p = pending_one(&s, &id).await;
+    let pending = pending_one(&s, &id).await;
     cancel.cancel();
     let r = res.await.unwrap();
-    assert!(matches!(r, Err(Error::Withdrawn(n)) if n == p.id), "{r:?}");
+    assert!(
+        matches!(r, Err(Error::Withdrawn(n)) if n == pending.id),
+        "{r:?}"
+    );
     assert_eq!(
-        e.store.approval(p.id).await.unwrap().status,
+        e.store.approval(pending.id).await.unwrap().status,
         ApprovalStatus::Withdrawn
     );
     stop(&s).await;
