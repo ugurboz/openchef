@@ -8,5 +8,14 @@ license.workspace = true
 repository.workspace = true
 publish = false
 
+[dependencies]
+sha2.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["process", "io-util"] }
+
+[dev-dependencies]
+tempfile.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "process", "io-util"] }
+
 [lints]
 workspace = true
