@@ -8,6 +8,8 @@ mod approvals;
 mod approver;
 mod env;
 mod lock;
+mod notify;
+mod policy;
 mod server;
 mod spawn;
 mod tasks;
