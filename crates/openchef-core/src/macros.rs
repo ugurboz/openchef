@@ -4,7 +4,9 @@
 /// `as_str`, `ALL`, `Display`, `FromStr` and `serde` implemented from that form.
 ///
 /// Variants are ordered as declared (`Ord`), which is what levels such as `Importance`
-/// rely on. Parsing an unknown string returns [`crate::Error::UnknownValue`].
+/// rely on. Parsing an unknown string returns [`crate::Error::UnknownValue`]. Other
+/// crates use it as `openchef_core::string_enum!` for their own closed vocabularies.
+#[macro_export]
 macro_rules! string_enum {
     (
         $(#[$meta:meta])*
@@ -51,16 +53,16 @@ macro_rules! string_enum {
             }
         }
 
-        impl ::serde::Serialize for $name {
-            fn serialize<S: ::serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        impl $crate::__serde::Serialize for $name {
+            fn serialize<S: $crate::__serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
                 serializer.serialize_str(self.as_str())
             }
         }
 
-        impl<'de> ::serde::Deserialize<'de> for $name {
-            fn deserialize<D: ::serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-                let text = <::std::borrow::Cow<'de, str> as ::serde::Deserialize>::deserialize(deserializer)?;
-                text.parse().map_err(::serde::de::Error::custom)
+        impl<'de> $crate::__serde::Deserialize<'de> for $name {
+            fn deserialize<D: $crate::__serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+                let text = <::std::borrow::Cow<'de, str> as $crate::__serde::Deserialize>::deserialize(deserializer)?;
+                text.parse().map_err($crate::__serde::de::Error::custom)
             }
         }
     };
