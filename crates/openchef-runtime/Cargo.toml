@@ -9,6 +9,7 @@ repository.workspace = true
 publish = false
 
 [dependencies]
+jsonschema.workspace = true
 openchef-core.workspace = true
 openchef-procs.workspace = true
 serde.workspace = true

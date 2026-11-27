@@ -19,7 +19,7 @@ crossterm = "0.29.0"
 dialoguer = "0.12.0"
 # Task ids need OS randomness without pulling in a full RNG (openchef-core).
 getrandom = "0.4.3"
-jsonschema = "0.63.2"
+jsonschema = { version = "0.63.2", default-features = false }
 landlock = "0.4.8"
 libc = "0.2.191"
 nix = "0.32.0"

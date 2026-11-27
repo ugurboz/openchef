@@ -36,6 +36,12 @@ pub enum Error {
         /// What went wrong.
         message: String,
     },
+    /// A turn's output schema is not a valid, self-contained JSON Schema.
+    #[error("output schema: {reason}")]
+    InvalidSchema {
+        /// Why it was refused.
+        reason: String,
+    },
     /// Process supervision failed.
     #[error(transparent)]
     Procs(#[from] openchef_procs::Error),
