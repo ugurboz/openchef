@@ -162,7 +162,7 @@ fn log(message: &str) {
 
 #[cfg(test)]
 mod tests {
-    use super::{Helper, MAX_BODY, find_program, first_chars};
+    use super::{Helper, MAX_BODY, first_chars};
 
     #[test]
     fn helper_arguments() {
@@ -204,9 +204,9 @@ mod tests {
             .unwrap_or_else(|e| panic!("{e}"));
         let path = std::env::join_paths(["relative", dir.path().to_str().unwrap_or("")])
             .unwrap_or_else(|e| panic!("{e}"));
-        assert_eq!(find_program("tool", Some(&path)), Some(tool));
-        assert_eq!(find_program("plain", Some(&path)), None);
-        assert_eq!(find_program("tool", None), None);
+        assert_eq!(super::find_program("tool", Some(&path)), Some(tool));
+        assert_eq!(super::find_program("plain", Some(&path)), None);
+        assert_eq!(super::find_program("tool", None), None);
     }
 
     #[cfg(windows)]
