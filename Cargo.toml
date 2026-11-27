@@ -13,7 +13,8 @@ repository = "https://github.com/ugurboz/openchef"
 # `name.workspace = true`; adding a new entry needs a reason in the PR (AGENTS.md §3).
 [workspace.dependencies]
 anyhow = "1.0.105"
-brush-parser = "0.5.0"
+# Pinned exactly: a parser upgrade must pass the S4 corpus first (D-031).
+brush-parser = "=0.5.0"
 clap = { version = "4.6.10", features = ["derive"] }
 crossterm = "0.29.0"
 dialoguer = "0.12.0"
