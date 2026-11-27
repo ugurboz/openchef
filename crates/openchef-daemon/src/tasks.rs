@@ -7,10 +7,10 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use openchef_api::{
-    CODE_INVALID_PARAMS, CODE_TASK_INVALID, ListParams, METHOD_TASK_CANCEL, METHOD_TASK_GET,
-    METHOD_TASK_LIST, METHOD_TASK_RETRY, METHOD_TASK_RUN, METHOD_TASK_UNWATCH, METHOD_TASK_WATCH,
-    NOTIFY_EVENT, NOTIFY_WATCH_ENDED, RunParams, TaskDetail, TaskParams, TaskWire, WatchEnded,
-    WatchParams, WatchResult, finished, rpc_error,
+    CODE_APPROVAL_SETTLED, CODE_INVALID_PARAMS, CODE_TASK_INVALID, ListParams, METHOD_TASK_CANCEL,
+    METHOD_TASK_GET, METHOD_TASK_LIST, METHOD_TASK_RETRY, METHOD_TASK_RUN, METHOD_TASK_UNWATCH,
+    METHOD_TASK_WATCH, NOTIFY_EVENT, NOTIFY_WATCH_ENDED, RunParams, TaskDetail, TaskParams,
+    TaskWire, WatchEnded, WatchParams, WatchResult, finished, rpc_error,
 };
 use openchef_core::{PermissionMode, TaskId};
 use openchef_engine::service::{Error as ServiceError, RunRequest, Service, Subscription};
@@ -95,7 +95,7 @@ where
     })
 }
 
-fn decode<T: DeserializeOwned + Default>(params: Value) -> Result<T, RpcError> {
+pub(crate) fn decode<T: DeserializeOwned + Default>(params: Value) -> Result<T, RpcError> {
     if params.is_null() {
         return Ok(T::default());
     }
@@ -103,29 +103,35 @@ fn decode<T: DeserializeOwned + Default>(params: Value) -> Result<T, RpcError> {
         .map_err(|e| rpc_error(CODE_INVALID_PARAMS, format!("invalid params: {e}")))
 }
 
-fn decode_required<T: DeserializeOwned>(params: Value) -> Result<T, RpcError> {
+pub(crate) fn decode_required<T: DeserializeOwned>(params: Value) -> Result<T, RpcError> {
     serde_json::from_value(params)
         .map_err(|e| rpc_error(CODE_INVALID_PARAMS, format!("invalid params: {e}")))
 }
 
-fn encode(v: &impl Serialize) -> Result<Value, RpcError> {
+pub(crate) fn encode(v: &impl Serialize) -> Result<Value, RpcError> {
     serde_json::to_value(v).map_err(|e| RpcError::server(format!("encode result: {e}")))
 }
 
-fn task_id(s: &str) -> Result<TaskId, RpcError> {
+pub(crate) fn task_id(s: &str) -> Result<TaskId, RpcError> {
     s.parse::<TaskId>()
         .map_err(|e| rpc_error(CODE_INVALID_PARAMS, e.to_string()))
 }
 
 /// Turns service errors into JSON-RPC errors the CLI can show as they are.
-fn rpc_err(e: &ServiceError) -> RpcError {
+pub(crate) fn rpc_err(e: &ServiceError) -> RpcError {
     match e {
         ServiceError::Invalid(message) => rpc_error(CODE_TASK_INVALID, message.clone()),
-        ServiceError::Store(s) if s.is_not_found() => rpc_error(CODE_TASK_INVALID, "no such task"),
+        ServiceError::Store(s) if s.is_not_found() => rpc_error(
+            CODE_TASK_INVALID,
+            s.to_string().replace("not found: ", "no such "),
+        ),
+        ServiceError::Settled { .. } => rpc_error(CODE_APPROVAL_SETTLED, e.to_string()),
         ServiceError::Store(_)
         | ServiceError::Engine(_)
         | ServiceError::EventLog(_)
-        | ServiceError::StopTimeout => RpcError::server(e.to_string()),
+        | ServiceError::StopTimeout
+        | ServiceError::Withdrawn(_)
+        | ServiceError::Stopping => RpcError::server(e.to_string()),
     }
 }
 

@@ -290,7 +290,7 @@ fn version() {
 #[test]
 fn pending_and_unknown_commands() {
     let env = fake_env(&[], &[]);
-    let (code, _, err) = run_with(&env, &["approve", "k3m9x2q7ab"]);
+    let (code, _, err) = run_with(&env, &["quota"]);
     assert_eq!(code, exit::USAGE);
     assert!(err.contains("not implemented yet (R4)"), "{err}");
     let (code, _, err) = run_with(&env, &["frobnicate"]);

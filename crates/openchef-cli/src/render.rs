@@ -4,7 +4,7 @@
 
 use std::io::{self, Write};
 
-use openchef_core::{AttemptStatus, StepStatus};
+use openchef_core::{Approval, ApprovalKind, ApprovalStatus, AttemptStatus, DecidedBy, StepStatus};
 use openchef_engine::{Event, EventKind};
 use openchef_runtime::{EventBody, ToolCall};
 use time::OffsetDateTime;
@@ -44,11 +44,20 @@ impl<'w> Renderer<'w> {
             return writeln!(self.w, "{line}");
         }
         if self.quiet {
-            // Quiet still shows what needs the user: the outcome.
-            return if ev.kind == EventKind::TaskStatus {
-                self.status(ev)
-            } else {
-                Ok(())
+            // Quiet still shows what needs the user: the outcome, and the requests that
+            // wait for them with their decisions.
+            return match ev.kind {
+                EventKind::TaskStatus => self.status(ev),
+                EventKind::ApprovalRequested => self.approval(ev, true),
+                EventKind::ApprovalDecided => self.approval(ev, false),
+                EventKind::StepStarted
+                | EventKind::AttemptStarted
+                | EventKind::Agent
+                | EventKind::VerifyStarted
+                | EventKind::VerifyFinished
+                | EventKind::AttemptEnded
+                | EventKind::StepFinished
+                | EventKind::Notice => Ok(()),
             };
         }
         let msg = ev.message.as_deref().unwrap_or("");
@@ -90,7 +99,41 @@ impl<'w> Renderer<'w> {
                 }
             }
             EventKind::Notice => self.line(&format!("  · {msg}")),
+            EventKind::ApprovalRequested => self.approval(ev, true),
+            EventKind::ApprovalDecided => self.approval(ev, false),
         }
+    }
+
+    /// A request (with the commands that settle it) or its decision.
+    fn approval(&mut self, ev: &Event, requested: bool) -> io::Result<()> {
+        let Some(a) = &ev.approval else {
+            return Ok(());
+        };
+        if requested {
+            // Every line of a multi-line command stays visible: a person approves
+            // exactly what runs.
+            let what = sanitize(&what(a)).trim_end().replace('\n', "\n      ");
+            self.line(&format!("  ? #{} {} {what}", a.id, a.agent))?;
+            return if a.kind == ApprovalKind::Question {
+                self.line(&format!("    answer: openchef answer {} \"…\"", a.id))
+            } else {
+                self.line(&format!(
+                    "    allow: openchef approve {0}   deny: openchef deny {0}",
+                    a.id
+                ))
+            };
+        }
+        let mut line = format!("  · #{} {}", a.id, a.status);
+        if let Some(by) = a.decided_by.filter(|b| *b != DecidedBy::User) {
+            line = format!("{line} ({by})");
+        }
+        if a.kind == ApprovalKind::Question && a.status == ApprovalStatus::Answered {
+            line = format!(
+                "{line}: {}",
+                first_line(a.answer.as_deref().unwrap_or(""), 80)
+            );
+        }
+        self.line(&line)
     }
 
     fn status(&mut self, ev: &Event) -> io::Result<()> {
@@ -145,6 +188,21 @@ impl<'w> Renderer<'w> {
             self.mid_text = false;
         }
         Ok(())
+    }
+}
+
+/// A request as one reads it: the tool and its argument, or the question.
+pub(crate) fn what(a: &Approval) -> String {
+    if a.kind == ApprovalKind::Question {
+        let mut s = format!("asks: {}", a.summary);
+        if !a.options.is_empty() {
+            s = format!("{s} ({})", a.options.join(", "));
+        }
+        return s;
+    }
+    match &a.tool {
+        Some(tool) => format!("{tool}: {}", a.summary),
+        None => a.summary.clone(),
     }
 }
 

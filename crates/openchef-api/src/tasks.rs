@@ -345,7 +345,7 @@ impl Client {
 #[must_use]
 pub fn friendly(e: &Error) -> String {
     if let Error::Rpc(openchef_runtime::linerpc::Error::Rpc { error, .. }) = e
-        && error.code == CODE_TASK_INVALID
+        && (error.code == CODE_TASK_INVALID || error.code == crate::CODE_APPROVAL_SETTLED)
     {
         return error.message.clone();
     }

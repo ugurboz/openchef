@@ -1,5 +1,6 @@
 //! One module per command.
 
+pub(crate) mod approvals;
 pub(crate) mod daemon;
 pub(crate) mod doctor;
 pub(crate) mod init;
@@ -42,6 +43,33 @@ pub(crate) fn dispatch(
             &deps.paths(cli.home.as_ref())?,
             &args,
             tasks::Action::Cancel,
+        ),
+        Some(Command::Approvals(args)) => {
+            approvals::list(out, &deps.paths(cli.home.as_ref())?, &args)
+        }
+        Some(Command::Approve(args)) => approvals::decide(
+            out,
+            &deps.paths(cli.home.as_ref())?,
+            &args.id,
+            openchef_api::Verdict::Allow,
+            &[],
+            args.json,
+        ),
+        Some(Command::Deny(args)) => approvals::decide(
+            out,
+            &deps.paths(cli.home.as_ref())?,
+            &args.id,
+            openchef_api::Verdict::Deny,
+            &args.message,
+            args.json,
+        ),
+        Some(Command::Answer(args)) => approvals::decide(
+            out,
+            &deps.paths(cli.home.as_ref())?,
+            &args.id,
+            openchef_api::Verdict::Answer,
+            &args.text,
+            args.json,
         ),
         Some(Command::Retry(args)) => tasks::act(
             out,

@@ -648,7 +648,7 @@ where they name Go packages or types, read the matching crate (`internal/<x>` �
 
 
 ## D-033 — Interim approver until approvals: mode-aware, no commands
-*2026-11-28 · R3.6*
+*2026-11-28 · R3.6 · superseded by D-034*
 
 - **Context:** R3 runs real agents end to end, but the evaluator, approval queue and
   `ask_user` arrive with R4. Go M3 forced `acceptEdits` on every session; the Rust
@@ -666,3 +666,31 @@ where they name Go packages or types, read the matching crate (`internal/<x>` �
   Go M3; users who want commands ask for `bypassPermissions` per task.
 - **Consequences:** R4.2 replaces the approver with the evaluator and the queue; the
   path guard stays as the invariant check under it.
+
+## D-034 — Evaluator-backed approver: per-session policy, the queue for the rest
+*2026-11-28 · R4.2 · supersedes D-033*
+
+- **Context:** with the evaluator (R4.1) and the approval queue (D-022) in place, the
+  interim approver of D-033 goes. Go `internal/app/{approver,policy,notify}.go` is the
+  reference.
+- **Decision:** each session loads the user, project and local settings files again
+  (edits apply to the next session; a broken rule fails the session instead of
+  silently allowing). The task's mode, fixed when it was created, wins over
+  `defaultMode`; `defaultMode` sets new tasks' mode but can never be
+  `bypassPermissions`, which runs only in an isolated worktree. The evaluator allows or
+  denies at once ("OpenChef refused this: <reason> (<rule>)."); `ask` verdicts, every
+  mode change and every question go to the queue, with the normalized request and the
+  evaluator's reason kept as audit JSON. Deny and ask rules also reach the CLIs
+  natively, after the invariant deny rules. Private, for reads and writes: every file
+  of the OpenChef home except the worktrees, including the SQLite `-wal`/`-shm`/
+  `-journal` companions of `state.db` (Go missed these). A queue failure while the
+  agent waits is a denial the agent can read; an agent that stopped waiting or a
+  stopping daemon is an approver error, which the adapter turns into a denial. The
+  desktop notifier runs `osascript` / `notify-send` with title and body as separate
+  arguments, on its own thread, killed after 5 s.
+- **Challenge:** "asking for every edit in manual mode makes `openchef run` stall":
+  that is what manual means in Claude Code too; `acceptEdits` or a `defaultMode` in the
+  settings is the one-line answer, and `--quiet` runs still show the request with the
+  commands that settle it.
+- **Consequences:** the path guard remains the invariant check inside the evaluator.
+  `ask_user` over MCP (R4.2b) reuses the same queue.

@@ -8,20 +8,22 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use openchef_config::{Config, Paths, Phase};
-use openchef_core::{Mode, PermissionMode, Task};
+use openchef_core::Task;
 use openchef_engine::service::{Deps, Service};
 use openchef_engine::{Agent, Config as EngineConfig, DynRuntime, Ordered, Runtimes, SpecFor};
+use openchef_runtime::SessionSpec;
 use openchef_runtime::agy::{AgyOptions, AgyRuntime};
 use openchef_runtime::claude::{ClaudeOptions, ClaudeRuntime};
 use openchef_runtime::codex::{CodexOptions, CodexRuntime};
-use openchef_runtime::{INVARIANT_DENY_RULES, SessionSpec};
 use openchef_store::Store;
 use time::OffsetDateTime;
 use tokio_util::sync::CancellationToken;
 
-use crate::approver::WorkspaceApprover;
+use crate::approver::{LateQueue, PolicyApprover};
 use crate::env::session_env;
-use crate::{Init, OnStop, Options, STOP_TIMEOUT, Services, task_methods};
+use crate::notify::desktop_notifier;
+use crate::policy::Policies;
+use crate::{Init, OnStop, Options, STOP_TIMEOUT, Services, service_methods};
 
 /// How long a pool cools down when it ran out of quota without saying until when.
 const UNKNOWN_RESET: Duration = Duration::from_hours(1);
@@ -89,7 +91,7 @@ async fn services(paths: Paths, version: String) -> Result<Services, String> {
         })
     };
     Ok(Services {
-        methods: task_methods(service),
+        methods: service_methods(service),
         on_stop: Some(on_stop),
     })
 }
@@ -124,9 +126,15 @@ fn build(cfg: &Config, paths: &Paths, version: &str, store: &Store) -> Result<Se
             Arc::new(move |pool: &str| c.get(pool, OffsetDateTime::now_utc()))
         }),
     });
-    let env: Vec<(String, String)> = std::env::vars().collect();
-    let pools = cfg.pools.clone();
-    let spec_for: SpecFor = Arc::new(move |t: &Task, a: &Agent| spec(t, a, &env, &pools));
+    let policies = Policies::new(paths)?;
+    let queue = LateQueue::default();
+    let session = SessionDeps {
+        env: std::env::vars().collect(),
+        pools: cfg.pools.clone(),
+        policies: policies.clone(),
+        queue: queue.clone(),
+    };
+    let spec_for: SpecFor = Arc::new(move |t: &Task, a: &Agent| session.spec(t, a));
     let mut engine = EngineConfig::new(store.clone(), runtimes, router, spec_for, &paths.home);
     engine.verify_env = openchef_engine::verify::minimal_env(std::env::vars_os(), &[]);
     engine.pool_exhausted = Some({
@@ -135,54 +143,60 @@ fn build(cfg: &Config, paths: &Paths, version: &str, store: &Store) -> Result<Se
             c.set(pool, until, OffsetDateTime::now_utc());
         })
     });
-    Service::new(Deps {
+    let service = Service::new(Deps {
         engine,
         event_dir: paths.sessions.clone(),
-        default_permissions: None,
+        default_permissions: Some(Arc::new(move |repo| policies.default_mode(repo))),
         on_fail: Some(Arc::new(|message| {
             use std::io::Write as _;
             // The daemon log is best effort.
             let _logged = writeln!(std::io::stderr(), "event log: {message}");
         })),
+        approval_timeout: None,
+        notify: desktop_notifier(),
     })
-    .map_err(|e| e.to_string())
+    .map_err(|e| e.to_string())?;
+    queue.set(service.clone());
+    Ok(service)
 }
 
-/// The session settings for an agent working on a task (the engine sets dir, model,
-/// effort, log path and `on_spawn`). `bypassPermissions` runs only in an isolated
-/// worktree (§9.3).
-fn spec(
-    t: &Task,
-    a: &Agent,
-    env: &[(String, String)],
-    pools: &BTreeMap<String, openchef_config::Pool>,
-) -> Result<SessionSpec, String> {
-    if t.permissions == PermissionMode::BypassPermissions
-        && (t.worktree.is_none() || t.mode != Mode::Isolated)
-    {
-        return Err("bypassPermissions is only allowed in an isolated worktree".into());
+/// What every session spec is built from.
+struct SessionDeps {
+    /// The daemon's environment, filtered per pool.
+    env: Vec<(String, String)>,
+    pools: BTreeMap<String, openchef_config::Pool>,
+    policies: Policies,
+    /// The service's approval queue, connected once the service exists.
+    queue: LateQueue,
+}
+
+impl SessionDeps {
+    /// The session settings for an agent working on a task (the engine sets dir,
+    /// model, effort, log path and `on_spawn`). The settings files are read again for
+    /// every session, so edits apply to the next one; `bypassPermissions` runs only in
+    /// an isolated worktree (§9.3).
+    fn spec(&self, t: &Task, a: &Agent) -> Result<SessionSpec, String> {
+        let policy = self.policies.session(t)?;
+        Ok(SessionSpec {
+            dir: t.worktree.clone().unwrap_or_default(),
+            model: None,
+            effort: None,
+            mode: policy.mode,
+            deny_rules: policy.deny_rules,
+            ask_rules: policy.ask_rules,
+            web_access: false,
+            env: session_env(&self.env, self.pools.get(&a.pool)),
+            approver: Arc::new(PolicyApprover {
+                queue: Arc::new(self.queue.clone()),
+                eval: policy.eval,
+                task: t.id.clone(),
+                agent: a.name.clone(),
+            }),
+            ask_user: None,
+            log_path: None,
+            on_spawn: None,
+        })
     }
-    let dir = t.worktree.clone().unwrap_or_default();
-    Ok(SessionSpec {
-        dir: dir.clone(),
-        model: None,
-        effort: None,
-        mode: t.permissions,
-        deny_rules: INVARIANT_DENY_RULES
-            .iter()
-            .map(|r| (*r).to_owned())
-            .collect(),
-        ask_rules: Vec::new(),
-        web_access: false,
-        env: session_env(env, pools.get(&a.pool)),
-        approver: Arc::new(WorkspaceApprover {
-            dir,
-            mode: t.permissions,
-        }),
-        ask_user: None,
-        log_path: None,
-        on_spawn: None,
-    })
 }
 
 /// The configured agents in routing order: the implement phase's list first, then the

@@ -1,5 +1,6 @@
 //! Ported from `internal/store/tasks_test.go` and `lifecycle_test.go` (Go reference):
-//! the task, step, attempt, session and turn repositories.
+//! the task, step, attempt, session and turn repositories; `approvals_test.go`: the
+//! approval queue.
 //!
 //! Dropped: `TestPermissionModeMigration` (the Go-era migration it covers does not exist;
 //! the Rust schema starts with `permission_mode`), the "bad kind" case of
@@ -19,11 +20,13 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 
 use openchef_core::{
-    AttemptStatus, Backend, Importance, Kind, Mode, PermissionMode, SessionState, Step, StepStatus,
-    Task, TaskId, TaskStatus, TurnKind, TurnStatus,
+    APPROVAL_TIMEOUT, ApprovalKind, ApprovalStatus, AttemptStatus, Backend, DecidedBy, Decision,
+    Importance, Kind, Mode, PermissionMode, SessionState, Step, StepStatus, Task, TaskId,
+    TaskStatus, TurnKind, TurnStatus,
 };
 use openchef_store::{
-    Error, NewAttempt, NewSession, OpenOptions, StepChange, Store, TaskChange, TaskFilter,
+    ApprovalFilter, Error, NewApproval, NewAttempt, NewSession, OpenOptions, StepChange, Store,
+    TaskChange, TaskFilter,
 };
 use time::OffsetDateTime;
 use time::macros::datetime;
@@ -1178,4 +1181,202 @@ async fn delete_task_cascades() {
             .unwrap();
         assert_eq!(n, 0, "{table}");
     }
+}
+
+// --- approvals (approvals_test.go) --------------------------------------------------
+
+async fn queue(db: &Store, task: &TaskId, kind: ApprovalKind) -> openchef_core::Approval {
+    let question = kind == ApprovalKind::Question;
+    db.create_approval(NewApproval {
+        task_id: task.clone(),
+        agent: "opus".into(),
+        kind,
+        tool: (!question).then(|| "Bash".to_owned()),
+        summary: if question {
+            "Which port?"
+        } else {
+            "go test ./..."
+        }
+        .into(),
+        options: if question {
+            vec!["8080".into(), "9090".into()]
+        } else {
+            Vec::new()
+        },
+        request: Some(r#"{"command":"go test ./..."}"#.into()),
+        expires_at: None,
+    })
+    .await
+    .unwrap()
+}
+
+fn decision(status: ApprovalStatus, answer: Option<&str>) -> Decision {
+    Decision {
+        status,
+        answer: answer.map(str::to_owned),
+        decided_by: DecidedBy::User,
+    }
+}
+
+#[tokio::test]
+async fn approval_lifecycle() {
+    let db = open_domain().await;
+    let t = create_run(&db).await;
+    let cmd = queue(&db, &t.id, ApprovalKind::Command).await;
+    let q = queue(&db, &t.id, ApprovalKind::Question).await;
+    assert!(
+        cmd.id != 0 && cmd.status == ApprovalStatus::Pending,
+        "{cmd:?}"
+    );
+    assert_eq!(cmd.expires_at - cmd.created_at, APPROVAL_TIMEOUT);
+    let pending = db
+        .approvals(ApprovalFilter {
+            pending: true,
+            ..ApprovalFilter::default()
+        })
+        .await
+        .unwrap();
+    assert_eq!(pending.len(), 2);
+    assert_eq!(pending[0].id, cmd.id, "oldest first");
+    assert_eq!(pending[1].options, q.options);
+
+    let got = db
+        .decide_approval(cmd.id, decision(ApprovalStatus::Allowed, None))
+        .await
+        .unwrap();
+    assert!(
+        got.status == ApprovalStatus::Allowed && got.decided_at.is_some(),
+        "{got:?}"
+    );
+    // A second answer reports the first one instead of overwriting it.
+    match db
+        .decide_approval(cmd.id, decision(ApprovalStatus::Denied, None))
+        .await
+    {
+        Err(Error::Conflict { got, .. }) => assert_eq!(got, "allowed"),
+        other => panic!("second decision: {other:?}"),
+    }
+    // Kinds and decisions must match.
+    for d in [
+        decision(ApprovalStatus::Allowed, None),
+        decision(ApprovalStatus::Answered, None),
+        decision(ApprovalStatus::Pending, None),
+    ] {
+        let r = db.decide_approval(q.id, d.clone()).await;
+        assert!(
+            matches!(r, Err(Error::Domain(_))),
+            "{d:?} on a question: {r:?}"
+        );
+    }
+    let got = db
+        .decide_approval(q.id, decision(ApprovalStatus::Answered, Some("8080")))
+        .await
+        .unwrap();
+    assert_eq!(got.answer.as_deref(), Some("8080"));
+    let missing = db
+        .decide_approval(999, decision(ApprovalStatus::Denied, None))
+        .await;
+    assert!(matches!(missing, Err(Error::NotFound(_))), "{missing:?}");
+    let newest = db
+        .approvals(ApprovalFilter {
+            task: Some(t.id.clone()),
+            pending: false,
+            limit: Some(1),
+        })
+        .await
+        .unwrap();
+    assert_eq!(newest.len(), 1);
+    assert_eq!(newest[0].id, q.id);
+}
+
+#[tokio::test]
+async fn approval_needs_active_task() {
+    let db = open_domain().await;
+    let t = create_run(&db).await;
+    db.transition_task(
+        &t.id,
+        TaskStatus::Running,
+        TaskStatus::Cancelled,
+        reason("test"),
+    )
+    .await
+    .unwrap();
+    let r = db
+        .create_approval(NewApproval {
+            task_id: t.id.clone(),
+            agent: "opus".into(),
+            kind: ApprovalKind::Command,
+            tool: None,
+            summary: "ls".into(),
+            options: Vec::new(),
+            request: None,
+            expires_at: None,
+        })
+        .await;
+    assert!(
+        matches!(r, Err(Error::Conflict { .. })),
+        "approval for a cancelled task: {r:?}"
+    );
+    let empty = db
+        .create_approval(NewApproval {
+            task_id: t.id.clone(),
+            agent: String::new(),
+            kind: ApprovalKind::Command,
+            tool: None,
+            summary: "ls".into(),
+            options: Vec::new(),
+            request: None,
+            expires_at: None,
+        })
+        .await;
+    assert!(
+        matches!(empty, Err(Error::Invalid(_))),
+        "no agent: {empty:?}"
+    );
+}
+
+#[tokio::test]
+async fn expire_pending_on_restart() {
+    let db = open_domain().await;
+    let t = create_run(&db).await;
+    let a = queue(&db, &t.id, ApprovalKind::Command).await;
+    let b = queue(&db, &t.id, ApprovalKind::Command).await;
+    db.decide_approval(b.id, decision(ApprovalStatus::Denied, None))
+        .await
+        .unwrap();
+    let expired = db.expire_pending("the daemon restarted").await.unwrap();
+    assert_eq!(expired.len(), 1);
+    assert_eq!(expired[0].id, a.id);
+    assert_eq!(expired[0].decided_by, Some(DecidedBy::Daemon));
+    // Still visible, with the reason.
+    let got = db.approval(a.id).await.unwrap();
+    assert_eq!(got.status, ApprovalStatus::Expired);
+    assert_eq!(got.answer.as_deref(), Some("the daemon restarted"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn decide_approval_race() {
+    let db = Arc::new(open_domain().await);
+    let t = create_run(&db).await;
+    let a = queue(&db, &t.id, ApprovalKind::Command).await;
+    let mut handles = Vec::new();
+    for i in 0..8 {
+        let db = Arc::clone(&db);
+        handles.push(tokio::spawn(async move {
+            let st = if i % 2 == 1 {
+                ApprovalStatus::Denied
+            } else {
+                ApprovalStatus::Allowed
+            };
+            db.decide_approval(a.id, decision(st, None)).await
+        }));
+    }
+    let mut wins = 0;
+    for h in handles {
+        match h.await.unwrap() {
+            Ok(_) => wins += 1,
+            Err(e) => assert!(e.is_conflict(), "{e}"),
+        }
+    }
+    assert_eq!(wins, 1, "{wins} decisions won");
 }

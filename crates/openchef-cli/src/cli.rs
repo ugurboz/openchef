@@ -70,6 +70,18 @@ pub(crate) enum Command {
     Cancel(TaskArgs),
     /// Retry a task that needs attention or waits for quota.
     Retry(TaskArgs),
+    /// List requests and questions waiting for you.
+    ///
+    /// Lists what agents are waiting for: permission requests (answer with `openchef
+    /// approve <id>` or `openchef deny <id>`) and questions (`openchef answer <id>
+    /// <text>`). Unanswered requests are denied after 15 minutes.
+    Approvals(ApprovalsArgs),
+    /// Allow a waiting request.
+    Approve(DecideArgs),
+    /// Deny a waiting request, optionally telling the agent why.
+    Deny(DenyArgs),
+    /// Answer an agent's question.
+    Answer(AnswerArgs),
     /// Not built yet.
     #[command(external_subcommand)]
     Pending(Vec<String>),
@@ -173,6 +185,55 @@ pub(crate) struct TaskArgs {
     pub(crate) json: bool,
 }
 
+#[derive(Debug, clap::Args)]
+pub(crate) struct ApprovalsArgs {
+    /// Include settled requests.
+    #[arg(long)]
+    pub(crate) all: bool,
+    /// Only this task's requests.
+    #[arg(long, value_name = "TASK")]
+    pub(crate) task: Option<String>,
+    /// Show at most this many requests.
+    #[arg(long, default_value_t = 50)]
+    pub(crate) limit: u32,
+    /// Print as JSON.
+    #[arg(long)]
+    pub(crate) json: bool,
+}
+
+#[derive(Debug, clap::Args)]
+pub(crate) struct DecideArgs {
+    /// The request id shown by `openchef approvals`.
+    pub(crate) id: String,
+    /// Print the request as JSON.
+    #[arg(long)]
+    pub(crate) json: bool,
+}
+
+#[derive(Debug, clap::Args)]
+pub(crate) struct DenyArgs {
+    /// The request id shown by `openchef approvals`.
+    pub(crate) id: String,
+    /// What to tell the agent.
+    #[arg(value_name = "MESSAGE")]
+    pub(crate) message: Vec<String>,
+    /// Print the request as JSON.
+    #[arg(long)]
+    pub(crate) json: bool,
+}
+
+#[derive(Debug, clap::Args)]
+pub(crate) struct AnswerArgs {
+    /// The question id shown by `openchef approvals`.
+    pub(crate) id: String,
+    /// The answer.
+    #[arg(required = true, num_args = 1.., value_name = "TEXT")]
+    pub(crate) text: Vec<String>,
+    /// Print the request as JSON.
+    #[arg(long)]
+    pub(crate) json: bool,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub(crate) enum OnOff {
     On,
@@ -182,10 +243,6 @@ pub(crate) enum OnOff {
 /// Commands of §12.1 that later milestones build, and the milestone that does.
 pub(crate) const PENDING: &[(&str, &str)] = &[
     ("pipeline", "R5"),
-    ("approve", "R4"),
-    ("deny", "R4"),
-    ("answer", "R4"),
-    ("approvals", "R4"),
     ("merge", "R5"),
     ("plan", "R5"),
     ("deferred", "R7"),
