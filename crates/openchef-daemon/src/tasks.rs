@@ -165,6 +165,7 @@ impl Handlers {
             agent: p.agent,
             importance: None,
             permissions,
+            sandbox: p.sandbox,
         };
         let t = self.service.run(req).await.map_err(|e| rpc_err(&e))?;
         encode(&TaskWire::from(&t))

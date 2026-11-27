@@ -153,6 +153,7 @@ fn deps_for(home: &Path) -> Deps {
         start_daemon: None,
         cwd: None,
         mcp_stdio: None,
+        sandbox: Some(std::sync::Arc::new(|| Ok("test sandbox".to_owned()))),
     }
 }
 
@@ -170,6 +171,7 @@ fn spec(approver: Arc<dyn Approver>) -> SessionSpec {
         ask_user: None,
         log_path: None,
         on_spawn: None,
+        confine: None,
     }
 }
 
@@ -225,6 +227,7 @@ fn start_daemon(paths: &Paths, claude: &FakeRuntime, quota_slot: &QuotaSlot) -> 
                         approval_timeout: None,
                         notify: None,
                         tap: None,
+                        sandbox_check: None,
                     })
                     .map_err(|e| e.to_string())?;
                     let _first = late.set(service.clone());
@@ -860,4 +863,17 @@ fn quota_command() {
     );
     let (code, _, _) = e.cli(&["quota", "probes", "maybe"]);
     assert_eq!(code, exit::USAGE, "bad switch accepted");
+}
+
+/// `--sandbox` fails closed: a daemon that cannot sandbox refuses the task instead of
+/// running it unconfined.
+#[test]
+fn sandbox_is_refused_without_a_sandbox() {
+    let e = CliEnv::new();
+    let (code, out, err) = e.cli(&["run", "--sandbox", "anything"]);
+    assert_ne!(code, exit::OK, "{out}");
+    assert!(err.contains("cannot sandbox"), "{err}");
+    assert_eq!(e.claude.remaining(), 0);
+    let (_, list, _) = e.cli(&["status", "--all"]);
+    assert!(!list.contains("anything"), "no task was created:\n{list}");
 }

@@ -29,6 +29,7 @@ openchef-permissions.workspace = true
 openchef-procs.workspace = true
 openchef-quota.workspace = true
 openchef-router.workspace = true
+openchef-sandbox.workspace = true
 openchef-runtime.workspace = true
 openchef-store.workspace = true
 serde.workspace = true

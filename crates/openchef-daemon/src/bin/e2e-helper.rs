@@ -219,6 +219,7 @@ fn spec() -> SessionSpec {
         ask_user: None,
         log_path: None,
         on_spawn: None,
+        confine: None,
     }
 }
 
@@ -247,6 +248,7 @@ async fn services(paths: Paths, runtime: ProcRuntime) -> Result<Services, String
         approval_timeout: None,
         notify: None,
         tap: None,
+        sandbox_check: None,
     })
     .map_err(|e| e.to_string())?;
     let killed = service.start().await.map_err(|e| e.to_string())?;

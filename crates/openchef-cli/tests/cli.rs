@@ -84,6 +84,7 @@ fn fake_env(installed: &[&'static str], logged_in: &[&'static str]) -> Env {
             start_daemon: None,
             cwd: None,
             mcp_stdio: None,
+            sandbox: Some(std::sync::Arc::new(|| Ok("test sandbox".to_owned()))),
         },
         paths,
         _dir: dir,

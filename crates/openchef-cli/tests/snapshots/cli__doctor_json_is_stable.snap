@@ -34,5 +34,9 @@ expression: report
       "problem": "not installed (not found on PATH)",
       "runtime": "agy"
     }
-  ]
+  ],
+  "sandbox": {
+    "available": true,
+    "detail": "test sandbox"
+  }
 }

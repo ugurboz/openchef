@@ -20,6 +20,9 @@ pub use commands::version::BuildInfo;
 /// Starts a background daemon when a command needs one.
 pub type StartDaemon = Arc<dyn Fn(&Paths) -> anyhow::Result<()> + Send + Sync>;
 
+/// Checks the OS sandbox: what enforces it, or why it cannot apply.
+pub type SandboxProbe = Arc<dyn Fn() -> Result<String, String> + Send + Sync>;
+
 /// The input and output an MCP server speaks over (`openchef mcp ask-user`).
 pub type McpStdio =
     Arc<dyn Fn() -> (Box<dyn std::io::Read + Send>, Box<dyn Write + Send>) + Send + Sync>;
@@ -39,6 +42,8 @@ pub struct Deps {
     pub cwd: Option<PathBuf>,
     /// Where `mcp ask-user` reads and writes; `None` is the process's stdin/stdout.
     pub mcp_stdio: Option<McpStdio>,
+    /// `doctor`'s sandbox check; `None` is the platform's real one.
+    pub sandbox: Option<SandboxProbe>,
 }
 
 impl std::fmt::Debug for Deps {
@@ -64,6 +69,7 @@ impl Deps {
             start_daemon: None,
             cwd: None,
             mcp_stdio: None,
+            sandbox: None,
         }
     }
 
@@ -86,6 +92,9 @@ pub mod exit {
     /// `daemon status`: no daemon is running (as `systemctl status` for an inactive
     /// unit).
     pub const NOT_RUNNING: i32 = 3;
+    /// The sandbox helper could not confine the command, which did not run (as `env`'s
+    /// 125 for its own failures).
+    pub const SANDBOX: i32 = 125;
 }
 
 /// Runs the program with `args` (including the program name) and returns the exit
@@ -95,6 +104,20 @@ where
     I: IntoIterator<Item = T>,
     T: Into<OsString> + Clone,
 {
+    let args: Vec<OsString> = args.into_iter().map(Into::into).collect();
+    // The Linux sandbox helper (`openchef __sandbox --policy … -- CMD`) confines this
+    // process and execs; it never reaches the command parser.
+    if args
+        .get(1)
+        .is_some_and(|a| a == openchef_sandbox::HELPER_COMMAND)
+    {
+        let failed = match openchef_sandbox::run_helper(&args[2..]) {
+            Ok(never) => match never {},
+            Err(e) => e,
+        };
+        drop(writeln!(err, "openchef: {failed}"));
+        return exit::SANDBOX;
+    }
     let parsed = match cli::Cli::try_parse_from(args) {
         Ok(parsed) => parsed,
         Err(e) => {

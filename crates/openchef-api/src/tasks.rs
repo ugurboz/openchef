@@ -51,6 +51,9 @@ pub struct RunParams {
         skip_serializing_if = "Option::is_none"
     )]
     pub permission_mode: Option<String>,
+    /// Runs inside OpenChef's OS sandbox (§21.3).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub sandbox: bool,
 }
 
 /// Names a task.

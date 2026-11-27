@@ -175,6 +175,7 @@ pub(crate) struct JsonFlag {
 }
 
 #[derive(Debug, clap::Args)]
+#[allow(clippy::struct_excessive_bools)] // independent command-line flags
 pub(crate) struct RunArgs {
     /// What to do.
     #[arg(required = true, num_args = 1.., value_name = "PROMPT")]
@@ -189,6 +190,11 @@ pub(crate) struct RunArgs {
     /// bypassPermissions).
     #[arg(long, value_name = "MODE")]
     pub(crate) permission_mode: Option<String>,
+    /// Run the agents and verification inside OpenChef's OS sandbox: writes only in the
+    /// worktree, no reads of your home directory's private files. Refused where the
+    /// sandbox cannot apply.
+    #[arg(long)]
+    pub(crate) sandbox: bool,
     /// Print only the final result.
     #[arg(short, long)]
     pub(crate) quiet: bool,
