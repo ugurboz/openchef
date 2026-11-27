@@ -5,6 +5,7 @@
 //! stream that never blocks its producer).
 
 mod approval;
+pub mod claude;
 mod error;
 mod event;
 pub mod linerpc;
