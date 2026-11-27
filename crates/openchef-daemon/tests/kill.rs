@@ -46,8 +46,8 @@ async fn wait_until(what: &str, limit: Duration, mut cond: impl AsyncFnMut() -> 
 async fn bounded<T>(paths: &Paths, what: &str, f: impl std::future::Future<Output = T>) -> T {
     match tokio::time::timeout(Duration::from_secs(20), f).await {
         Ok(v) => v,
-        Err(_) => panic!(
-            "{what} did not answer in 20 s\ndaemon log:\n{}",
+        Err(elapsed) => panic!(
+            "{what} did not answer in 20 s ({elapsed})\ndaemon log:\n{}",
             daemon_log(paths)
         ),
     }
