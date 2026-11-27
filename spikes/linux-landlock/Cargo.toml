@@ -1,0 +1,13 @@
+# Spike S2 (task card R1.2): not part of the OpenChef workspace.
+[package]
+name = "landlock-spike"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[dependencies]
+landlock = "0.4.8"
+seccompiler = "0.5.0"
+libc = "0.2.191"
