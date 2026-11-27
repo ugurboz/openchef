@@ -163,15 +163,15 @@ pub struct Session {
     /// The CLI's own id (Claude session id, Codex thread id, ACP session id), once
     /// reported.
     pub native_id: Option<String>,
-    /// The process id, once spawned.
-    pub pid: Option<u32>,
+    /// The process id. A session is recorded once its process exists (§5.1, D-019).
+    pub pid: u32,
     /// The process start token; with `pid` it identifies the process exactly, so a later
     /// daemon never kills a reused PID.
-    pub start_token: Option<u64>,
+    pub start_token: u64,
     /// Where the session stands.
     pub state: SessionState,
     /// Holds `raw.jsonl` and `events.jsonl` (§11).
-    pub log_dir: PathBuf,
+    pub log_dir: Option<PathBuf>,
     /// When it was opened.
     pub opened_at: OffsetDateTime,
     /// When it was closed.
