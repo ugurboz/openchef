@@ -88,6 +88,12 @@ Exit: every `testdata/` replay passes; one turn + resume live on each runtime.
 
 ## R6 TUI — Elif (lead UI), Uğur (slash commands, approvals modal), İbo (Windows terminal parity)
 
+R6 includes the **progress tree** (maintainer idea, 2026-11-27): a small widget in the
+bottom-right corner of the TUI, one leaf per agent session of the task (up to 8), leaf
+colour = session state (idle, working, done, failed, waiting for quota), and the tree
+growing upward through the phases (plan → implement → review → done). A desktop version
+(macOS menu bar / Windows tray) is post-v1 with the graphical clients (§22).
+
 ## R7 Unattended — risk classes and deferred queue (Uğur), keep-awake (İbo), report (Elif), sandbox defaults and overnight e2e (Lead)
 
 ## R8 Release — `cargo-dist` + Homebrew tap (Uğur), winget/Scoop + Windows signing (İbo), docs and examples (Elif), security notes and v1.0.0 (Lead)

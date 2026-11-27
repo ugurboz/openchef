@@ -1,0 +1,12 @@
+[package]
+name = "openchef-core"
+description = "Domain model and state machines: tasks, steps, attempts, sessions, turns, approvals. No I/O."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[lints]
+workspace = true

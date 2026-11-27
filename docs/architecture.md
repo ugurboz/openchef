@@ -1150,3 +1150,5 @@ Planned, not promised; each needs a spike and an amendment before work starts.
   each CLI accepting a proxy or base-URL override without breaking its login.
 - **OpenCode runtime** (findings already in `docs/research`).
 - **Graphical clients:** a Tauri desktop app or a local web view as daemon API clients.
+  Includes a menu-bar / tray progress icon: the TUI's progress tree (one leaf per agent
+  session, growing with the pipeline's phases) outside the terminal.
