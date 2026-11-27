@@ -1,0 +1,34 @@
+name: Spike S2 (Linux sandbox)
+
+# Task card R1.2. Runs the Landlock + seccomp experiments on several kernels.
+# Not a required check; results go to the job summary.
+on:
+  pull_request:
+    paths:
+      - "spikes/linux-landlock/**"
+      - ".github/workflows/spike-linux.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  spike:
+    name: S2 (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Toolchain (from rust-toolchain.toml)
+        run: rustup show active-toolchain || rustup toolchain install
+      - name: Agent CLIs (version checks only; no login on CI)
+        run: npm install -g @anthropic-ai/claude-code @openai/codex || true
+      - name: Build harness
+        working-directory: spikes/linux-landlock
+        run: cargo build --release
+      - name: Experiments
+        run: spikes/linux-landlock/experiments.sh
