@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | Accepted (v1.0-rust: Rust rewrite, built-in sandbox, bounded debate — D-027…D-030) |
+| **Status** | Accepted (v1.0-rust: Rust rewrite, built-in sandbox, bounded debate — D-027…D-032) |
 | **Scope** | v1.0 (MVP) and the contracts later versions must keep |
 | **Audience** | Maintainers and contributors |
 
@@ -670,8 +670,12 @@ shell parser (`brush-parser`, pure Rust; chosen by spike S4, §17) into simple c
 expanded. **Every** simple command must be allowed for the whole command to be allowed;
 any denied one denies it. **Fail closed:** anything the parser rejects, or any construct
 the evaluator does not model, falls through to `ask` (and is `critical` unattended,
-§21.2). The bypass corpus of the Go implementation is the acceptance test. (The
-prototype's `fnmatch("pytest*")` allowed `pytest; curl … | sh`.)
+§21.2). The bypass corpus of the Go implementation is the acceptance test, run against
+the Go splitter's own output (S4, `docs/research/s4-shell-parser.md`). Because the parser
+recurses on the native stack, lines longer than 64 KiB or nested deeper than 64 are
+rejected before parsing (a deeper line would abort the daemon), and parsing runs on a
+dedicated thread with an 8 MiB stack (D-031). A bare redirection (`> file`) is a write.
+(The prototype's `fnmatch("pytest*")` allowed `pytest; curl … | sh`.)
 
 Questions (`ask_user`) and approvals go to one queue, shown in the TUI, answerable from
 the CLI (`openchef approve|deny|answer <id>`), with an OS notification when no TUI is
@@ -1110,11 +1114,23 @@ classes apply to whatever reaches the permission tool.
     browser profiles, other repositories, OpenChef's own `state.db` and logs);
   - *network:* open in v1 (agents need model APIs and package registries); egress
     allowlists are post-v1 (§22).
-  The exact paths per CLI and OS are fixed by spikes S1–S3 and listed in
-  `docs/research/`.
-- **macOS:** a Seatbelt profile generated per session, applied with `sandbox-exec`.
-- **Linux:** Landlock (filesystem) and a seccomp deny list, applied in `pre_exec` of the
-  child; namespaces only where the system allows unprivileged ones.
+  Every sandboxed process gets a private `TMPDIR`, and tool caches (Go, npm, Cargo,
+  pip) are redirected to per-repository caches under
+  `~/.openchef/sandbox-cache/<repo-id>/` through the tools' environment variables; the
+  user's global caches are not shared (`[sandbox] writable` can opt in). Allowed paths
+  are canonicalized, so symlink targets (e.g. the DNS resolver behind
+  `/etc/resolv.conf`) are covered. The exact paths per CLI and OS are in
+  `docs/research/s1-macos-seatbelt.md` and `s2-linux-landlock.md` (D-032).
+- **One sandbox, ours:** OS sandboxes do not nest (Seatbelt refuses a second profile).
+  With `--sandbox`, OpenChef's sandbox replaces the CLI's own: Codex runs with
+  `danger-full-access` (its approvals still reach OpenChef), and agy's own sandbox is not
+  counted as a boundary — it silently retries a command unsandboxed when its sandbox
+  cannot be applied (S1).
+- **macOS:** a Seatbelt profile generated per session, applied with `sandbox-exec -p`
+  (deprecated by Apple but working; `sandbox_init` is the fallback).
+- **Linux:** a hidden helper (`openchef __sandbox`) applies Landlock (best effort from ABI
+  5; fail closed when not enforced at all) and a seccomp deny list to itself, then execs
+  the command. No user namespaces: Ubuntu 24.04 blocks unprivileged ones by default.
 - **Windows:** a restricted token or AppContainer (chosen by S3) inside the task's Job
   Object, with ACLs granting the token access to the worktree.
 - **Fail closed:** if the policy cannot be enforced (old kernel without Landlock, a

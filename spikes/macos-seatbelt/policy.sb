@@ -1,0 +1,48 @@
+;; OpenChef S1 Seatbelt policy (task card R1.1, architecture §21.3).
+;; Parameters (sandbox-exec -D NAME=value):
+;;   WORKTREE  the task worktree            (read-write)
+;;   TMP       the session's private TMPDIR (read-write)
+;;   HOME      the user's home              (denied except the paths below)
+;;   STATE1..3 agent CLI state directories  (read-write; "/nonexistent" when unused)
+;;
+;; Strategy: allow by default (agent CLIs are Node/Rust programs that touch many mach
+;; services, sysctls and devices), then confine the file system: no writes anywhere
+;; except the worktree, the temp dir, the CLI state and devices; no reads of the home
+;; directory except toolchains, the CLI state and the worktree.
+(version 1)
+(allow default)
+
+;; Writes: deny everything, then re-allow (later rules win).
+(deny file-write*)
+(allow file-write*
+  (subpath (param "WORKTREE"))
+  (subpath (param "TMP"))
+  (subpath (param "STATE1"))
+  (subpath (param "STATE2"))
+  (subpath (param "STATE3"))
+  (literal "/dev/null")
+  (literal "/dev/zero")
+  ;; Pseudo-terminals: agy runs its commands on a PTY.
+  (literal "/dev/ptmx")
+  (regex #"^/dev/tty")
+  (regex #"^/dev/fd/")
+  ;; Claude Code's Bash tool tracks its working directory in /tmp/claude-<pid>-cwd.
+  (regex #"^/private/tmp/claude-[0-9]+-cwd$"))
+
+;; Reads: deny the home directory, then re-allow what agents and toolchains need.
+(deny file-read* (subpath (param "HOME")))
+(allow file-read*
+  (literal (param "HOME"))
+  (subpath (param "WORKTREE"))
+  (subpath (param "TMP"))
+  (subpath (param "STATE1"))
+  (subpath (param "STATE2"))
+  (subpath (param "STATE3"))
+  (subpath (string-append (param "HOME") "/.local/bin"))
+  (subpath (string-append (param "HOME") "/.local/share"))
+  (subpath (string-append (param "HOME") "/.cargo"))
+  (subpath (string-append (param "HOME") "/.rustup"))
+  (subpath (string-append (param "HOME") "/.nvm"))
+  (subpath (string-append (param "HOME") "/go"))
+  (subpath (string-append (param "HOME") "/.gitconfig"))
+  (subpath (string-append (param "HOME") "/Library/Keychains")))

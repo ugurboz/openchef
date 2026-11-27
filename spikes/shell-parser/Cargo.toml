@@ -1,0 +1,16 @@
+# Spike S4 (task card R1.4): not part of the OpenChef workspace.
+[package]
+name = "shell-parser-spike"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[dependencies]
+brush-parser = "0.5.0"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[dev-dependencies]
+proptest = "1.12.0"

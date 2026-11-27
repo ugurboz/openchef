@@ -606,3 +606,43 @@ where they name Go packages or types, read the matching crate (`internal/<x>` �
 - **Consequences:** `AGENTS.md` (read by Claude Code through `CLAUDE.md`, by Codex and
   agy directly) carries these rules into every contributor's agent session.
 
+## D-031 — Shell parsing: brush-parser behind a length and nesting guard
+*2026-11-27 · R1.4 (spike S4)*
+
+- **Context:** §9.2 needs a real shell parser in Rust. Go used `mvdan.cc/sh`.
+- **Options:** `brush-parser`; tree-sitter-bash; a hand-written splitter.
+- **Challenge:** "a younger parser will miss constructs": measured instead of assumed —
+  the Go splitter itself was run as an oracle on 147 lines (the Go corpora plus 85
+  hostile cases); the Rust port matches on 142, and every difference fails closed or is
+  a Go bug (`> file` was not reported as a write). The oracle also caught a port bug
+  that hid `export X=$(curl …)`. "It can crash": yes — deep nesting overflows its stack
+  and aborts the process, which no `catch_unwind` stops.
+- **Decision:** `brush-parser`, pinned exactly; reject lines over 64 KiB or nested deeper
+  than 64 before parsing (safe on a 2 MiB stack even in debug builds); parse on a
+  dedicated 8 MiB-stack thread; fail closed on parse errors, NUL bytes, `select` and
+  substitutions inside parameter expansions; keep the corpus and oracle output as a CI
+  test so a parser upgrade must pass it.
+- **Consequences:** R4.1 starts from `spikes/shell-parser`.
+
+## D-032 — Built-in sandbox: one sandbox, private TMPDIR, per-repository caches
+*2026-11-27 · R1.1, R1.2 (spikes S1, S2)*
+
+- **Context:** S1 (macOS Seatbelt, real logged-in CLIs) and S2 (Linux Landlock +
+  seccomp on three Ubuntu kernels) tested the §21.3 policy.
+- **Findings that decide the design:** the kernel stopped an agent with every permission
+  prompt off from reading a secret or writing outside the worktree, on both OSes;
+  sandboxes do not nest (Codex's own sandbox fails inside ours; agy then retries
+  unsandboxed); unprivileged user namespaces are blocked on Ubuntu 24.04; compilers fail
+  without a writable `TMPDIR`; Go needs redirected caches; DNS needs the resolver's
+  symlink target.
+- **Challenge:** "redirected caches make every task re-download": per-repository, not
+  per-task, caches keep repeat runs fast; sharing the user's global caches would let an
+  agent poison them for every other project, so that stays opt-in.
+- **Decision:** §21.3 as amended — OpenChef's sandbox replaces the CLI's own (Codex
+  `danger-full-access` under it), private `TMPDIR` always, per-repository caches,
+  canonicalized paths, Linux through a self-confining helper without namespaces,
+  macOS through generated Seatbelt profiles. Windows waits for S3.
+- **Consequences:** D-003 (Codex sandbox per mode) and D-015 (agy sandbox always on) are
+  amended in R4.5/R4.6 for sandboxed runs; `openchef doctor` probes that each sandbox
+  applies.
+
