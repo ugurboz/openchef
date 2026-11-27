@@ -8,28 +8,13 @@
 use std::io;
 use std::path::{Component, Path, PathBuf};
 
+use crate::Error;
+
 /// The workspace directories only OpenChef writes.
 pub const PROTECTED: &[&str] = &[".git", ".openchef", ".claude"];
 
 /// Where the default file systems are case-insensitive.
 const FOLD_CASE: bool = cfg!(any(target_os = "macos", windows));
-
-/// Why a path could not be checked.
-#[derive(Debug, thiserror::Error)]
-pub enum Error {
-    /// A relative path came without a base to resolve it against.
-    #[error("pathguard: relative path {} without a base", .0.display())]
-    RelativeWithoutBase(PathBuf),
-    /// Resolving symlinks failed for a reason other than a missing file.
-    #[error("pathguard: resolve {}: {source}", path.display())]
-    Resolve {
-        /// The path being resolved.
-        path: PathBuf,
-        /// The error.
-        #[source]
-        source: io::Error,
-    },
-}
 
 /// `p` made absolute (relative to `base`) and lexically cleaned, with every symlink in
 /// its existing part resolved. The not-yet-existing tail is appended as is: a file the
