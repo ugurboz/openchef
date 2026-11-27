@@ -1,12 +1,24 @@
 [package]
 name = "openchef-fake"
-description = "Scriptable fake agent CLI used by tests."
+description = "Scriptable in-process fake runtime used by engine tests."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 publish = false
+
+[dependencies]
+openchef-procs.workspace = true
+openchef-runtime.workspace = true
+serde_json.workspace = true
+tokio = { workspace = true, features = ["rt", "macros"] }
+tokio-util.workspace = true
+
+[dev-dependencies]
+openchef-core.workspace = true
+tempfile.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time"] }
 
 [lints]
 workspace = true
