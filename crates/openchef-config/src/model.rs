@@ -225,7 +225,12 @@ impl Config {
     /// Writes the configuration to `path` atomically (a temporary file in the same
     /// directory, then a rename), readable only by the user on Unix.
     pub fn save(&self, path: &Path) -> Result<(), Error> {
-        let text = self.to_toml()?;
+        self.save_with_header(path, "")
+    }
+
+    /// [`Config::save`] with a comment block (or any text) written before the TOML.
+    pub fn save_with_header(&self, path: &Path, header: &str) -> Result<(), Error> {
+        let text = format!("{header}{}", self.to_toml()?);
         crate::paths::write_private_atomic(path, text.as_bytes())
     }
 }

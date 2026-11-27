@@ -6,12 +6,14 @@
 //! broken references), and only a fully valid file becomes a typed [`Config`].
 
 mod defaults;
+mod doctor;
 mod error;
 mod model;
 mod paths;
 mod raw;
 
 pub use defaults::default_config;
+pub use doctor::{CommandOutput, Detector, Login, Runner, RuntimeStatus, SystemRunner};
 pub use error::Error;
 pub use model::{
     Agent, Billing, Config, DEFAULT_MAX_CONCURRENT, EffortProfile, Phase, PhaseRouting, PlanTier,
