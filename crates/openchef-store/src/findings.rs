@@ -94,17 +94,44 @@ impl Store {
         ids: Vec<(String, Option<String>)>,
         status: &str,
     ) -> Result<usize, Error> {
-        if !STATUSES.contains(&status) {
-            return Err(Error::Invalid(format!("finding status {status:?}")));
+        self.resettle_findings(task, step, round, ids, "open", status)
+            .await
+    }
+
+    /// Moves a step's findings of `round` with the given ids from status `from` to `to`
+    /// (an arbiter's verdict moves `disputed` ones); a `Some` note replaces the old one.
+    /// Returns how many changed.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Invalid`] for an unknown status.
+    pub async fn resettle_findings(
+        &self,
+        task: &TaskId,
+        step: u32,
+        round: u32,
+        ids: Vec<(String, Option<String>)>,
+        from: &str,
+        to: &str,
+    ) -> Result<usize, Error> {
+        for status in [from, to] {
+            if !STATUSES.contains(&status) {
+                return Err(Error::Invalid(format!("finding status {status:?}")));
+            }
         }
-        let (task, status, now) = (task.clone(), status.to_owned(), format_time(self.now()));
+        let (task, from, to, now) = (
+            task.clone(),
+            from.to_owned(),
+            to.to_owned(),
+            format_time(self.now()),
+        );
         self.write(move |tx| {
             let mut changed = 0;
             for (id, note) in &ids {
                 changed += tx.execute(
                     "UPDATE findings SET status = ?1, note = COALESCE(?2, note), updated_at = ?3 \
-                     WHERE task_id = ?4 AND step_idx = ?5 AND round = ?6 AND finding = ?7 AND status = 'open'",
-                    params![status, note.as_deref().and_then(non_empty), now, task.as_str(), step, round, id],
+                     WHERE task_id = ?4 AND step_idx = ?5 AND round = ?6 AND finding = ?7 AND status = ?8",
+                    params![to, note.as_deref().and_then(non_empty), now, task.as_str(), step, round, id, from],
                 )?;
             }
             Ok(changed)
