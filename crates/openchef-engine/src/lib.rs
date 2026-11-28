@@ -4,6 +4,10 @@
 //! quota runs out, and parks a task in `waiting_quota` or `needs_attention` when it
 //! cannot continue.
 
+pub mod arbiter;
+mod arbitrating;
+pub mod council;
+mod councilling;
 mod engine;
 mod events;
 pub mod plan;
@@ -24,5 +28,5 @@ pub use engine::{
     Clock, Config, ConfineVerify, Engine, Error, Limits, PoolExhausted, Sleep, SpecFor,
 };
 pub use events::{Discard, Event, EventKind, Sink};
-pub use router::{Agent, Cooldown, NoAgent, Ordered, Router};
+pub use router::{Agent, Avoid, Cooldown, NoAgent, Ordered, Router};
 pub use runtimes::{DynRuntime, DynSession, Runtimes};

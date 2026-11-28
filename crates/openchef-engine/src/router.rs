@@ -44,22 +44,65 @@ pub trait Router: Send + Sync {
         None
     }
 
-    /// A reviewer for a step: an agent of another provider than `avoid_runtime` (the
-    /// implementer's), never the same one (§7.5). A task's pin does not apply.
+    /// An agent independent of the work it judges (reviewer, plan critic, arbiter,
+    /// §7.5): its runtime is none of `avoid.runtimes` and its pool none of
+    /// `avoid.pools`. A task's pin does not apply.
     ///
     /// # Errors
     ///
-    /// [`NoAgent`] when no other provider can review now.
-    fn route_reviewer(
+    /// [`NoAgent`] when no such agent can work now.
+    fn route_independent(
         &self,
         _task: &Task,
         _step: &Step,
-        avoid_runtime: &str,
+        avoid: &Avoid,
     ) -> Result<Agent, NoAgent> {
         Err(NoAgent {
             resume_at: None,
-            reason: format!("no reviewer other than {avoid_runtime} is configured"),
+            reason: format!("no agent outside {avoid} is configured"),
         })
+    }
+}
+
+/// What an independent agent must not share with the work it judges.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Avoid {
+    /// Runtimes (providers) to avoid.
+    pub runtimes: Vec<String>,
+    /// Quota pools to avoid.
+    pub pools: Vec<String>,
+}
+
+impl Avoid {
+    /// Avoids these runtimes.
+    #[must_use]
+    pub fn runtimes(runtimes: impl IntoIterator<Item = impl Into<String>>) -> Self {
+        Self {
+            runtimes: runtimes.into_iter().map(Into::into).collect(),
+            pools: Vec::new(),
+        }
+    }
+
+    /// Whether `agent` is independent of what this avoids.
+    #[must_use]
+    pub fn allows(&self, agent: &Agent) -> bool {
+        !self.runtimes.contains(&agent.runtime) && !self.pools.contains(&agent.pool)
+    }
+}
+
+impl std::fmt::Display for Avoid {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut parts = Vec::new();
+        if !self.runtimes.is_empty() {
+            parts.push(format!("providers {}", self.runtimes.join(", ")));
+        }
+        if !self.pools.is_empty() {
+            parts.push(format!("pools {}", self.pools.join(", ")));
+        }
+        if parts.is_empty() {
+            return f.write_str("nothing");
+        }
+        f.write_str(&parts.join(" and "))
     }
 }
 
@@ -112,22 +155,21 @@ impl Router for Ordered {
         self.agents.iter().find(|a| a.name == name).cloned()
     }
 
-    fn route_reviewer(
+    fn route_independent(
         &self,
         _task: &Task,
         _step: &Step,
-        avoid_runtime: &str,
+        avoid: &Avoid,
     ) -> Result<Agent, NoAgent> {
         self.agents
             .iter()
             .find(|a| {
-                a.runtime != avoid_runtime
-                    && self.cooldown.as_ref().is_none_or(|c| c(&a.pool).is_none())
+                avoid.allows(a) && self.cooldown.as_ref().is_none_or(|c| c(&a.pool).is_none())
             })
             .cloned()
             .ok_or_else(|| NoAgent {
                 resume_at: None,
-                reason: format!("no agent of another provider than {avoid_runtime} is available"),
+                reason: format!("no agent outside {avoid} is available"),
             })
     }
 }

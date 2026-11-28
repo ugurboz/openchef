@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use openchef_config::{Billing, Config, Phase, Strategy};
 use openchef_core::{Importance, Step, Task};
-use openchef_engine::{Agent, NoAgent, Router};
+use openchef_engine::{Agent, Avoid, NoAgent, Router};
 use openchef_quota::{Admission, Health, admit, headroom};
 use openchef_router::{Candidate, Counters, EffortInput, Request, choose, resolve_effort};
 use time::OffsetDateTime;
@@ -224,18 +224,17 @@ impl Router for QuotaRouter {
         self.agents.iter().find(|a| a.name == name).cloned()
     }
 
-    fn route_reviewer(
-        &self,
-        task: &Task,
-        step: &Step,
-        avoid_runtime: &str,
-    ) -> Result<Agent, NoAgent> {
+    fn route_independent(&self, task: &Task, step: &Step, avoid: &Avoid) -> Result<Agent, NoAgent> {
         let importance = step.importance.at_least(task.importance);
         let now = self.quota.now();
         let view = self.quota.view();
         let mut cands = Vec::new();
         let mut refused = Vec::new();
-        for a in self.agents.iter().filter(|a| a.runtime != avoid_runtime) {
+        for a in self
+            .agents
+            .iter()
+            .filter(|a| !avoid.runtimes.contains(&a.runtime) && !avoid.pools.contains(&a.pool))
+        {
             let (c, r) = self.candidate(a, &view, now, &[]);
             cands.push(c);
             refused.extend(r);
@@ -258,7 +257,7 @@ impl Router for QuotaRouter {
             choose(req, &cands, &mut counters)
         };
         let pick = decided
-            .map_err(|e| no_agent(format!("no reviewer: {e}"), &refused))?
+            .map_err(|e| no_agent(format!("no agent outside {avoid}: {e}"), &refused))?
             .agent;
         let Some(a) = self.agents.iter().find(|a| a.name == pick) else {
             return Err(no_agent(format!("agent {pick:?} vanished"), &refused));
@@ -549,12 +548,13 @@ mod tests {
         };
         // gpt has less headroom, but it is the only other provider; the pin is ignored.
         let a = r
-            .route_reviewer(&task, &step, "claude")
+            .route_independent(&task, &step, &openchef_engine::Avoid::runtimes(["claude"]))
             .unwrap_or_else(|e| panic!("{e}"));
         assert_eq!(a.name, "gpt");
         q.set("chatgpt", 1.0, H4);
         assert!(
-            r.route_reviewer(&task, &step, "claude").is_err(),
+            r.route_independent(&task, &step, &openchef_engine::Avoid::runtimes(["claude"]))
+                .is_err(),
             "never the same provider"
         );
     }

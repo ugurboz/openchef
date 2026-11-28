@@ -38,6 +38,16 @@ pub enum EventKind {
     /// `step`, `attempt`, `agent`, `status` (`clean`, `findings`, `skipped`), `message`
     /// (the counts or why it was skipped).
     ReviewFinished,
+    /// `step` 0, `attempt`, `agent` (the critic), `message` (the round): a plan critique.
+    CouncilStarted,
+    /// `step` 0, `status` (`locked`, `findings`, `skipped`), `message` (the counts or
+    /// why): the council's outcome for the plan.
+    CouncilFinished,
+    /// `step`, `attempt`, `agent` (the arbiter), `message` (the disputed findings).
+    ArbitrationStarted,
+    /// `step`, `attempt`, `agent`, `status` (`ruled`, `skipped`), `message` (upheld and
+    /// dismissed counts, or why it was skipped).
+    ArbitrationFinished,
 }
 
 impl EventKind {
@@ -58,6 +68,10 @@ impl EventKind {
             Self::ApprovalDecided => "approval_decided",
             Self::ReviewStarted => "review_started",
             Self::ReviewFinished => "review_finished",
+            Self::CouncilStarted => "council_started",
+            Self::CouncilFinished => "council_finished",
+            Self::ArbitrationStarted => "arbitration_started",
+            Self::ArbitrationFinished => "arbitration_finished",
         }
     }
 }
