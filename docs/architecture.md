@@ -599,13 +599,14 @@ OpenChef's built-in OS sandbox (§21.3); the worktrees are the same either way.
   fast-forwards or merges it into the user's branch on request.
 - **`team`** — the task gets an integration branch `openchef/<task-id>`. Independent steps
   (steps whose `files` scopes do not overlap) run in parallel, each in its own worker
-  worktree on `openchef/<task-id>/step-N`. A merge queue integrates finished steps one at
+  worktree on `openchef/<task-id>-step-N` (D-041). A merge queue integrates finished steps one at
   a time: rebase onto the integration branch → run verification → fast-forward. A rebase
   conflict sends the step back to its agent with the conflict as the next turn message.
 
 ### 8.2 Rules
 
-- Worktrees live under `~/.openchef/worktrees/<repo-id>/<task-id>[/step-N]`, outside the
+- Worktrees live under `~/.openchef/worktrees/<repo-id>/<task-id>` (team workers in
+  `<task-id>.steps/step-N`), outside the
   repository, so they never appear in the user's `git status`.
 - The user's working tree and current branch are **never** written by OpenChef except by
   `openchef merge`, which refuses to run on a dirty tree.

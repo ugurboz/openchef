@@ -922,3 +922,36 @@ where they name Go packages or types, read the matching crate (`internal/<x>` �
   before a person sees it; the debate of a task never exceeds its budget across
   restarts; `openchef status` shows the turns spent. The budget is never refilled, not
   even by `retry`: a person who wants more debate raises the limit.
+
+## D-041 — Team mode: scope-derived dependencies, worker tasks, a stateless merge queue
+*2026-11-28 · R5.5*
+
+- **Context:** §8.1 `team` mode (independent steps in parallel, a merge queue) and
+  `openchef merge`. Go never had team mode; nothing to port. The engine drives one task
+  as one sequential `Run`; steps, attempts and the debate budget are already per step
+  in the store.
+- **Options (dependencies):** (a) the planner declares them, or (b) they follow from
+  overlapping `files` scopes. **(parallelism):** (c) concurrent futures inside one engine
+  task, or (d) one Tokio task per worker with its own `Run`. **(queue state):** (e) a
+  queue table, or (f) derived from git: trailers on the integration and step branches.
+  **(paths):** (g) §8's `<task>/step-N` and `openchef/<task>/step-N`, or (h)
+  `<task>.steps/step-N` and `openchef/<task>-step-N`.
+- **Challenge:** declared dependencies (a) need a schema change and a planner that gets
+  them right; scopes (b) already exist, are validated and are what makes a merge
+  conflict likely, and an unscoped step simply serializes. (c) would need a futures
+  dependency and a `Run` shared mutably by several step loops; (d) reuses the step loop
+  unchanged with a per-worker workspace and base. A queue table (e) can disagree with git
+  after a crash between a merge and its row; (f) cannot. (g) nests a worktree inside the
+  integration worktree (its commit would stage a gitlink) and the ref
+  `openchef/<task>/step-N` cannot coexist with `openchef/<task>`.
+- **Decision:** (b), (d), (f), (h). At most `Limits::team_workers` (3) workers; a
+  worker's park is reported to the coordinator, which parks the task only when nothing
+  else can run. A worker commits on its step branch and leaves the step `running`; the
+  queue rebases it onto the integration branch, verifies it there and fast-forwards,
+  then marks it `verified`. A conflict or failing verification resets the worker to the
+  integration tip and runs the step again with the conflict and its saved patch, within
+  `max_retries`. `openchef merge` (daemon `task.merge`) fast-forwards or merges a `done`
+  task's branch into the user's clean, attached branch and aborts on conflict.
+- **Consequences:** a plan without scopes behaves as `isolated`; parallel steps share
+  the task's debate budget through its atomic counter (D-040); a restart rebuilds the
+  queue from branches. `pipeline` gains `--mode` and `--importance` (#52).
