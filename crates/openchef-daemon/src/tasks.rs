@@ -187,7 +187,7 @@ impl Handlers {
             .get(&task_id(&p.id)?)
             .await
             .map_err(|e| rpc_err(&e))?;
-        encode(&plan_result(&d.task, &d.steps))
+        encode(&plan_result(&d.task, &d.steps, &d.findings))
     }
 
     async fn approve(&self, params: Value) -> Result<Value, RpcError> {
@@ -219,16 +219,25 @@ impl Handlers {
             .await
             .map_err(|e| rpc_err(&e))?;
         let d = self.service.get(&id).await.map_err(|e| rpc_err(&e))?;
-        encode(&plan_result(&d.task, &steps))
+        encode(&plan_result(&d.task, &steps, &d.findings))
     }
 }
 
 /// A task with its plan; the title is the task's first line, since the plan's own
 /// title is not stored.
-fn plan_result(t: &openchef_core::Task, steps: &[openchef_core::Step]) -> PlanResult {
+fn plan_result(
+    t: &openchef_core::Task,
+    steps: &[openchef_core::Step],
+    findings: &[openchef_store::FindingRow],
+) -> PlanResult {
     PlanResult {
         task: TaskWire::from(t),
         plan: Plan::from_steps(&openchef_engine::service::title(&t.prompt), steps),
+        findings: findings
+            .iter()
+            .filter(|f| f.step_index == 0)
+            .map(finding_wire)
+            .collect(),
     }
 }
 
