@@ -4,8 +4,8 @@ use std::io::Write;
 
 use anyhow::Context as _;
 use openchef_api::{
-    Client, ListParams, NOTIFY_EVENT, NOTIFY_WATCH_ENDED, RunParams, TaskDetail, TaskWire,
-    WatchEnded, WatchParams, finished, friendly,
+    Client, ListParams, NOTIFY_EVENT, NOTIFY_WATCH_ENDED, PipelineParams, RunParams, TaskDetail,
+    TaskWire, WatchEnded, WatchParams, finished, friendly,
 };
 use openchef_config::Paths;
 use openchef_core::{AttemptStatus, TaskStatus};
@@ -13,7 +13,7 @@ use openchef_engine::{Event, EventKind};
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
 
-use crate::cli::{LogsArgs, RunArgs, StatusArgs, TaskArgs};
+use crate::cli::{LogsArgs, PipelineArgs, RunArgs, StatusArgs, TaskArgs};
 use crate::commands::daemon::{CLIENT_NAME, client_runtime, launch, report};
 use crate::output::table;
 use crate::render::{Renderer, first_line, short_sha, since};
@@ -53,6 +53,28 @@ pub(crate) fn run(
     paths: &Paths,
     args: &RunArgs,
 ) -> anyhow::Result<i32> {
+    start(out, deps, paths, args, None)
+}
+
+/// `openchef pipeline`: like `run`, but the task plans first and stops for approval
+/// (or, with `--yes`, runs on).
+pub(crate) fn pipeline(
+    out: &mut dyn Write,
+    deps: &Deps,
+    paths: &Paths,
+    args: &PipelineArgs,
+) -> anyhow::Result<i32> {
+    start(out, deps, paths, &args.run, Some(args.yes))
+}
+
+/// Starts a run (`pipeline` is `None`) or a pipeline and follows it.
+fn start(
+    out: &mut dyn Write,
+    deps: &Deps,
+    paths: &Paths,
+    args: &RunArgs,
+    pipeline: Option<bool>,
+) -> anyhow::Result<i32> {
     let dir = match &deps.cwd {
         Some(d) => d.clone(),
         None => std::env::current_dir().context("current directory")?,
@@ -68,7 +90,11 @@ pub(crate) fn run(
             permission_mode: args.permission_mode.clone(),
             sandbox: args.sandbox,
         };
-        let t = match c.run(&params).await {
+        let started = match pipeline {
+            None => c.run(&params).await,
+            Some(yes) => c.pipeline(&PipelineParams { run: params, yes }).await,
+        };
+        let t = match started {
             Ok(t) => t,
             Err(e) => {
                 c.close();
@@ -87,8 +113,19 @@ pub(crate) fn run(
         if !args.json {
             writeln!(out, "task {} on branch openchef/{}", t.id, t.id)?;
         }
-        let mut r = Renderer::new(out, args.json, args.quiet);
-        let code = follow(&mut c, &t.id, &mut r).await;
+        let through_approval = pipeline == Some(true);
+        let code = {
+            let mut r = Renderer::new(out, args.json, args.quiet);
+            follow(&mut c, &t.id, &mut r, through_approval).await
+        };
+        if pipeline.is_some() && !args.json && code.is_ok() {
+            let shown = c.plan(&t.id).await;
+            if let Ok(p) = shown
+                && p.task.status == TaskStatus::AwaitingApproval.as_str()
+            {
+                out.write_all(crate::commands::plans::text(&p).as_bytes())?;
+            }
+        }
         c.close();
         code
     })
@@ -96,7 +133,12 @@ pub(crate) fn run(
 
 /// Renders a task's past and live events until it finishes or parks, the daemon goes,
 /// or Ctrl-C detaches. Returns the exit code: failure when the task did not succeed.
-async fn follow(c: &mut Client, id: &str, r: &mut Renderer<'_>) -> anyhow::Result<i32> {
+async fn follow(
+    c: &mut Client,
+    id: &str,
+    r: &mut Renderer<'_>,
+    through_approval: bool,
+) -> anyhow::Result<i32> {
     let res = c
         .watch(&WatchParams {
             id: id.to_owned(),
@@ -110,7 +152,11 @@ async fn follow(c: &mut Client, id: &str, r: &mut Renderer<'_>) -> anyhow::Resul
     for ev in &res.events {
         r.event(ev)?;
     }
-    if res.finished {
+    // `--yes` approves the plan right after it is stored: keep following through it.
+    let stops = |status: &str| {
+        finished(status) && !(through_approval && status == TaskStatus::AwaitingApproval.as_str())
+    };
+    if res.finished && stops(&res.status) {
         r.finish()?;
         return Ok(outcome(&res.status)); // the store's status, not the last logged event
     }
@@ -136,7 +182,7 @@ async fn follow(c: &mut Client, id: &str, r: &mut Renderer<'_>) -> anyhow::Resul
                 r.event(&ev)?;
                 if ev.kind == EventKind::TaskStatus
                     && let Some(status) = ev.status.as_deref()
-                    && finished(status)
+                    && stops(status)
                 {
                     r.finish()?;
                     return Ok(outcome(status));
@@ -159,6 +205,7 @@ fn outcome(status: &str) -> i32 {
         TaskStatus::Done,
         TaskStatus::WaitingQuota,
         TaskStatus::Running,
+        TaskStatus::AwaitingApproval,
     ]
     .iter()
     .any(|s| s.as_str() == status);
@@ -170,7 +217,7 @@ pub(crate) fn logs(out: &mut dyn Write, paths: &Paths, args: &LogsArgs) -> anyho
         let mut c = connect(None, paths).await?;
         let mut r = Renderer::new(out, args.json, false);
         if args.follow {
-            let code = follow(&mut c, &args.task, &mut r).await;
+            let code = follow(&mut c, &args.task, &mut r, false).await;
             c.close();
             return code;
         }

@@ -144,6 +144,7 @@ impl<'w> Renderer<'w> {
             }
             "running" => Ok(()),
             "done" => self.line("✔ done"),
+            "awaiting_approval" if !msg.is_empty() => self.line(&format!("⏸ {msg}")),
             "waiting_quota" => self.line(&format!("⏸ waiting for quota: {msg}")),
             "needs_attention" => self.line(&format!("! needs attention: {msg}")),
             "failed" => self.line(&format!("✖ failed: {msg}")),

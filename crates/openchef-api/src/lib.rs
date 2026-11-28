@@ -6,6 +6,7 @@
 mod approvals;
 mod client;
 pub mod mcp;
+mod plans;
 mod quota;
 mod tasks;
 pub mod transport;
@@ -15,6 +16,7 @@ use std::path::PathBuf;
 pub use approvals::*;
 pub use client::Client;
 use openchef_runtime::linerpc::RpcError;
+pub use plans::*;
 pub use quota::*;
 use serde::{Deserialize, Serialize};
 pub use tasks::*;
