@@ -8,8 +8,8 @@
 use std::path::PathBuf;
 
 use openchef_core::{
-    Attempt, AttemptStatus, Session, SessionState, StateMachine as _, StepStatus, TaskId, Turn,
-    TurnKind, TurnStatus,
+    Attempt, AttemptRole, AttemptStatus, Session, SessionState, StateMachine as _, StepStatus,
+    TaskId, Turn, TurnKind, TurnStatus,
 };
 use rusqlite::{Connection, OptionalExtension as _, Params, Row, Transaction, params};
 
@@ -25,8 +25,11 @@ use crate::{Error, Store};
 pub struct NewAttempt {
     /// The task.
     pub task_id: TaskId,
-    /// The step, which must be running.
+    /// The step: running for `implement`, existing for `review`/`arbiter`, 0 for
+    /// task-level roles.
     pub step_index: u32,
+    /// What the agent does.
+    pub role: AttemptRole,
     /// The routed agent.
     pub agent: String,
     /// Its runtime.
@@ -58,8 +61,7 @@ pub struct NewSession {
     pub log_dir: Option<PathBuf>,
 }
 
-const ATTEMPT_COLUMNS: &str =
-    "id, task_id, step_idx, agent, runtime, model, pool, status, outcome, started_at, ended_at";
+const ATTEMPT_COLUMNS: &str = "id, task_id, step_idx, agent, runtime, model, pool, status, outcome, started_at, ended_at, role";
 const SESSION_COLUMNS: &str = "s.id, s.attempt_id, s.resumed_from, s.runtime, s.native_id, s.pid, s.start_token, \
      s.state, s.log_dir, s.opened_at, s.closed_at";
 const TURN_COLUMNS: &str =
@@ -81,6 +83,7 @@ fn scan_attempt(r: &Row<'_>) -> Result<Attempt, Error> {
             "attempts.ended_at",
             r.get::<_, Option<String>>(10)?.as_deref(),
         )?,
+        role: parse_enum("attempts.role", &r.get::<_, String>(11)?)?,
     })
 }
 
@@ -192,30 +195,47 @@ fn resumable(tx: &Transaction<'_>, from: i64, s: &NewSession) -> Result<String, 
 }
 
 impl Store {
-    /// Records a new running attempt at a step. The task must be active, the step
-    /// running, and the step may have only one running attempt at a time.
+    /// Records a new running attempt. The task must be active; an implementer's step
+    /// must be running, a reviewer's or arbiter's step must exist, a task-level role
+    /// uses step 0; one attempt per (step, role) may run at a time.
     pub async fn start_attempt(&self, a: NewAttempt) -> Result<Attempt, Error> {
-        let key = format!("{}/{}", a.task_id, a.step_index);
+        let key = format!("{}/{}/{}", a.task_id, a.step_index, a.role);
         if a.agent.is_empty() || a.runtime.is_empty() || a.pool.is_empty() {
             return Err(Error::Invalid(format!(
                 "attempt at {key}: agent, runtime and pool are required"
             )));
         }
+        if a.role.task_level() != (a.step_index == 0) {
+            return Err(Error::Invalid(format!(
+                "attempt at {key}: task-level roles use step 0, step roles a real step"
+            )));
+        }
         let now = self.now();
         self.write(move |tx| {
             require_active(tx, a.task_id.as_str())?;
-            let row: Option<(String, i64)> = tx
-                .query_row(
-                    "SELECT status, (SELECT COUNT(*) FROM attempts WHERE task_id = ?1 AND step_idx = ?2 AND status = 'running') \
-                     FROM steps WHERE task_id = ?1 AND idx = ?2",
-                    params![a.task_id.as_str(), a.step_index],
-                    |r| Ok((r.get(0)?, r.get(1)?)),
-                )
-                .optional()?;
-            let (step, running) = row.ok_or_else(|| Error::NotFound(format!("step {key}")))?;
-            if step != StepStatus::Running.as_str() {
-                return Err(Error::Conflict { entity: "step", key, want: "running".to_owned(), got: step });
+            if !a.role.task_level() {
+                let step: Option<String> = tx
+                    .query_row(
+                        "SELECT status FROM steps WHERE task_id = ?1 AND idx = ?2",
+                        params![a.task_id.as_str(), a.step_index],
+                        |r| r.get(0),
+                    )
+                    .optional()?;
+                let step = step.ok_or_else(|| Error::NotFound(format!("step {key}")))?;
+                if a.role == AttemptRole::Implement && step != StepStatus::Running.as_str() {
+                    return Err(Error::Conflict {
+                        entity: "step",
+                        key,
+                        want: "running".to_owned(),
+                        got: step,
+                    });
+                }
             }
+            let running: i64 = tx.query_row(
+                "SELECT COUNT(*) FROM attempts WHERE task_id = ?1 AND step_idx = ?2 AND role = ?3 AND status = 'running'",
+                params![a.task_id.as_str(), a.step_index, a.role.as_str()],
+                |r| r.get(0),
+            )?;
             if running > 0 {
                 return Err(Error::Conflict {
                     entity: "step",
@@ -225,14 +245,15 @@ impl Store {
                 });
             }
             let _ = tx.execute(
-                "INSERT INTO attempts (task_id, step_idx, agent, runtime, model, pool, status, started_at) \
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'running', ?7)",
-                params![a.task_id.as_str(), a.step_index, a.agent, a.runtime, non_empty(&a.model), a.pool, format_time(now)],
+                "INSERT INTO attempts (task_id, step_idx, role, agent, runtime, model, pool, status, started_at) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'running', ?8)",
+                params![a.task_id.as_str(), a.step_index, a.role.as_str(), a.agent, a.runtime, non_empty(&a.model), a.pool, format_time(now)],
             )?;
             Ok(Attempt {
                 id: tx.last_insert_rowid(),
                 task_id: a.task_id,
                 step_index: a.step_index,
+                role: a.role,
                 agent: a.agent,
                 runtime: a.runtime,
                 model: a.model,
@@ -246,8 +267,8 @@ impl Store {
         .await
     }
 
-    /// Moves a running attempt to a terminal status. An attempt succeeds only once its
-    /// step is verified and no turn of it is in flight.
+    /// Moves a running attempt to a terminal status. An attempt succeeds only with no
+    /// turn of it in flight, and an implementer only once its step is verified.
     pub async fn end_attempt(
         &self,
         id: i64,
@@ -259,17 +280,18 @@ impl Store {
         let now = format_time(self.now());
         self.write(move |tx| {
             if to == AttemptStatus::Succeeded {
-                let row: Option<(String, i64)> = tx
+                let row: Option<(String, Option<String>, i64)> = tx
                     .query_row(
-                        "SELECT st.status, (SELECT COUNT(*) FROM turns t JOIN sessions s ON s.id = t.session_id \
+                        "SELECT a.role, st.status, (SELECT COUNT(*) FROM turns t JOIN sessions s ON s.id = t.session_id \
                          WHERE s.attempt_id = a.id AND t.status = 'sent') \
-                         FROM attempts a JOIN steps st ON st.task_id = a.task_id AND st.idx = a.step_idx WHERE a.id = ?1",
+                         FROM attempts a LEFT JOIN steps st ON st.task_id = a.task_id AND st.idx = a.step_idx WHERE a.id = ?1",
                         [id],
-                        |r| Ok((r.get(0)?, r.get(1)?)),
+                        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
                     )
                     .optional()?;
-                let (step, in_flight) = row.ok_or_else(|| Error::NotFound(format!("attempt {id}")))?;
-                if step != StepStatus::Verified.as_str() {
+                let (role, step, in_flight) = row.ok_or_else(|| Error::NotFound(format!("attempt {id}")))?;
+                let step = step.unwrap_or_else(|| "missing".to_owned());
+                if role == AttemptRole::Implement.as_str() && step != StepStatus::Verified.as_str() {
                     return Err(Error::Invalid(format!("attempt {id}: succeeded but its step is {step}")));
                 }
                 if in_flight > 0 {
