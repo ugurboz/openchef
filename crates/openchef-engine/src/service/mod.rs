@@ -132,6 +132,8 @@ pub struct Detail {
     pub attempts: Vec<Attempt>,
     /// Its review findings, every round, in step and round order.
     pub findings: Vec<openchef_store::FindingRow>,
+    /// Debate turns spent and the budget (§7.5, D-040).
+    pub debate_turns: (u32, u32),
     /// An engine run is in progress in this daemon.
     pub driving: bool,
 }
@@ -408,12 +410,15 @@ impl Service {
         let steps = self.inner.store.steps(id).await?;
         let attempts = self.inner.store.attempts(id).await?;
         let findings = self.inner.store.findings(id).await?;
+        let spent = self.inner.store.debate_turns(id).await?;
+        let budget = self.inner.engine.cfg.debate.budget(steps.len());
         let driving = self.inner.state().running.contains_key(id);
         Ok(Detail {
             task,
             steps,
             attempts,
             findings,
+            debate_turns: (spent, budget),
             driving,
         })
     }

@@ -4,14 +4,19 @@
 //! nothing blocking is open or the rounds are used up.
 
 use openchef_core::{Attempt, AttemptRole, AttemptStatus, TurnKind};
+use openchef_runtime::{Failure, FailureKind};
 use openchef_store::{FindingRow, NewAttempt};
 
 use crate::arbiter::Dispute;
+use crate::arbitrating::Ruled;
+use crate::breakers::Progress;
+use crate::debate::Level;
 use crate::engine::{Error, Run};
+use crate::escalating::Stagnation;
 use crate::events::EventKind;
 use crate::prompts::retry_prompt;
 use crate::review::{self, Finding, Review, Severity};
-use crate::router::{Agent, Avoid};
+use crate::router::{Agent, Avoid, NoAgent};
 use crate::session::Live;
 use crate::step::AttemptEnd;
 use crate::turn::TurnEnd;
@@ -40,82 +45,151 @@ enum Round {
         attempt: i64,
         review: Review,
     },
-    /// No review this round: no other provider, or an invalid answer twice.
+    /// No review this round: no other provider, quota, the budget, or an invalid
+    /// answer twice.
     Skipped,
+}
+
+/// How a fix turn went.
+pub(crate) enum Fix {
+    /// The implementer answered (or the turn ended otherwise): its answer and the
+    /// findings it rebutted.
+    Answered(String, Vec<Dispute>),
+    /// The debate budget is used up: the turn did not run, the findings stay open.
+    Unbudgeted,
+    /// The implementer's pool ran out: fail over like an implement turn (§7.2).
+    Exhausted(Failure),
+}
+
+/// How the verification after a fix went.
+pub(crate) enum Reverified {
+    /// It passes (or the step has none).
+    Passed,
+    /// It still fails with the retries used up.
+    Exhausted,
+    /// It keeps failing the same way, or the change went back to an earlier state.
+    Stagnated(Stagnation),
+}
+
+/// What earlier attempts at this step left of its review (D-040): it continues after
+/// the last recorded round instead of repeating rounds already paid for.
+#[derive(Default)]
+struct Earlier {
+    last_round: u32,
+    /// The last round's open blocking findings.
+    open: Vec<Finding>,
+    /// Disputed findings by round, for the arbiter.
+    raised: Vec<(u32, Dispute)>,
+    /// Findings settled `fixed`.
+    fixed: Vec<Finding>,
+    /// The reviewers' runtimes and pools.
+    reviewers: Vec<(String, String)>,
 }
 
 impl Run<'_> {
     /// Reviews step `i` after its verification passed, runs fix turns, then commits.
+    #[allow(
+        clippy::too_many_lines,
+        reason = "the review loop of D-038 with its breakers in one place"
+    )]
     pub(crate) async fn reviewed_commit(
         &mut self,
         i: usize,
         a: &Attempt,
         agent: &Agent,
         live: &mut Option<Live>,
-        retries: &mut u32,
+        progress: &mut Progress,
     ) -> Result<AttemptEnd, Error> {
-        let importance = self.steps[i].importance.at_least(self.task.importance);
         // Review belongs to the pipeline (§7.5); a single-step `run` stays the fast path.
-        let total = if self.task.kind == openchef_core::Kind::Pipeline {
-            review::rounds(importance)
-        } else {
-            0
-        };
+        if self.task.kind != openchef_core::Kind::Pipeline {
+            return self.commit(i, a, agent).await;
+        }
         let index = self.steps[i].index;
-        let mut open: Vec<Finding> = Vec::new();
+        let mut level = Level::new(self.steps[i].importance.at_least(self.task.importance));
+        self.lower_for(&mut level, index, &agent.pool);
+        let earlier = self.earlier_review(index).await?;
+        progress.fixed(&earlier.fixed);
+        let mut open = earlier.open;
         // Rebutted findings by round, for the arbiter; and what the arbiter must not share
         // with the work it judges: the implementer and every reviewer.
-        let mut raised: Vec<(u32, Dispute)> = Vec::new();
+        let mut raised = earlier.raised;
         let mut judged = Avoid {
             runtimes: vec![agent.runtime.clone()],
             pools: vec![agent.pool.clone()],
         };
-        for round in 1..=total {
-            let (reviewer, review_attempt, found) =
-                match self.review_round(i, agent, round, &open).await? {
-                    Round::Skipped => break,
-                    Round::Reviewed {
-                        reviewer,
-                        attempt,
-                        review,
-                    } => (reviewer, attempt, review),
-                };
+        for (runtime, pool) in earlier.reviewers {
+            judged.runtimes.push(runtime);
+            judged.pools.push(pool);
+        }
+        let mut round = earlier.last_round;
+        while round < self.depth(level).review_rounds {
+            round += 1;
+            // The content under review: a fix that undid an earlier one is a cycle.
+            if let Some(why) = progress.state(self.worktree()?.state().await?) {
+                let s = Stagnation::plain(why, String::new());
+                return self.stagnated(i, a, agent, live.take(), s).await;
+            }
+            let (reviewer, review_attempt, found) = match self
+                .review_round(i, agent, round, &open, &mut level)
+                .await?
+            {
+                Round::Skipped => break,
+                Round::Reviewed {
+                    reviewer,
+                    attempt,
+                    review,
+                } => (reviewer, attempt, review),
+            };
             judged.runtimes.push(reviewer.runtime.clone());
             judged.pools.push(reviewer.pool.clone());
             // Findings of the last round that are not reported again were fixed.
             let again: Vec<String> = found.findings.iter().map(|f| f.id.clone()).collect();
-            let fixed: Vec<(String, Option<String>)> = open
-                .iter()
-                .filter(|f| !again.contains(&f.id))
-                .map(|f| (f.id.clone(), None))
-                .collect();
-            if round > 1 {
+            let fixed: Vec<&Finding> = open.iter().filter(|f| !again.contains(&f.id)).collect();
+            if round > 1 && !fixed.is_empty() {
+                let ids = fixed.iter().map(|f| (f.id.clone(), None)).collect();
                 self.store()
-                    .settle_findings(&self.task.id, index, round - 1, fixed, "fixed")
+                    .settle_findings(&self.task.id, index, round - 1, ids, "fixed")
                     .await?;
             }
+            progress.fixed(fixed);
             self.record(i, round, review_attempt, &found).await?;
             let blocking: Vec<Finding> = found
                 .findings
                 .into_iter()
                 .filter(|f| f.severity.blocking())
                 .collect();
+            let reopened = progress.reopened(&blocking);
+            if !reopened.is_empty() {
+                let s = reopened_stagnation(round, &reopened);
+                return self.stagnated(i, a, agent, live.take(), s).await;
+            }
             if blocking.is_empty() {
                 break;
             }
-            let (answer, rebutted) = self
+            let (answer, rebutted) = match self
                 .fix_turn(i, a, agent, live, &reviewer.name, round, &blocking)
-                .await?;
+                .await?
+            {
+                Fix::Answered(answer, rebutted) => (answer, rebutted),
+                Fix::Unbudgeted => break, // the findings stay open for the report
+                Fix::Exhausted(f) => return self.exhausted(i, a, live.take(), agent, &f).await,
+            };
             open = blocking
                 .into_iter()
                 .filter(|f| !rebutted.iter().any(|d| d.finding.id == f.id))
                 .collect();
             raised.extend(rebutted.into_iter().map(|d| (round, d)));
-            if !self.reverify(i, a, agent, live, retries).await? {
-                let reason = format!("step {index}: verification failed after review fixes");
-                return self.give_up(i, a, live.take(), &reason).await;
+            match self.reverify(i, a, agent, live, progress).await? {
+                Reverified::Passed => {}
+                Reverified::Exhausted => {
+                    let reason = format!("step {index}: verification failed after review fixes");
+                    return self.give_up(i, a, live.take(), &reason).await;
+                }
+                Reverified::Stagnated(s) => {
+                    return self.stagnated(i, a, agent, live.take(), s).await;
+                }
             }
-            if round == total {
+            if round >= self.depth(level).review_rounds {
                 // No review is left to confirm the last fixes: take the implementer's word
                 // for those it reports fixed; the rest stay open for the report.
                 let claimed: Vec<(String, Option<String>)> = review::fixed_claims(&answer)
@@ -132,15 +206,68 @@ impl Run<'_> {
                 break; // everything blocking was rebutted: nothing left to review
             }
         }
-        if !raised.is_empty()
-            && !self
-                .arbitrate(i, a, agent, live, retries, &raised, &judged)
+        if !raised.is_empty() {
+            match self
+                .arbitrate(i, a, agent, live, progress, &raised, &judged)
                 .await?
-        {
-            let reason = format!("step {index}: verification failed after the arbiter's fixes");
-            return self.give_up(i, a, live.take(), &reason).await;
+            {
+                Ruled::Done => {}
+                Ruled::Failed => {
+                    let reason =
+                        format!("step {index}: verification failed after the arbiter's fixes");
+                    return self.give_up(i, a, live.take(), &reason).await;
+                }
+                Ruled::Stagnated(s) => return self.stagnated(i, a, agent, live.take(), s).await,
+                Ruled::Exhausted(f) => return self.exhausted(i, a, live.take(), agent, &f).await,
+            }
         }
         self.commit(i, a, agent).await
+    }
+
+    /// What earlier attempts at step `index` left of its review.
+    async fn earlier_review(&self, index: u32) -> Result<Earlier, Error> {
+        let rows: Vec<FindingRow> = self
+            .store()
+            .findings(&self.task.id)
+            .await?
+            .into_iter()
+            .filter(|r| r.step_index == index)
+            .collect();
+        let attempts = self.store().attempts(&self.task.id).await?;
+        let reviewer_of = |id: Option<i64>| {
+            attempts
+                .iter()
+                .find(|a| Some(a.id) == id)
+                .map_or_else(|| "an earlier reviewer".to_owned(), |a| a.agent.clone())
+        };
+        let mut e = Earlier {
+            last_round: rows.iter().map(|r| r.round).max().unwrap_or(0),
+            reviewers: attempts
+                .iter()
+                .filter(|a| a.step_index == index && a.role == AttemptRole::Review)
+                .map(|a| (a.runtime.clone(), a.pool.clone()))
+                .collect(),
+            ..Earlier::default()
+        };
+        for r in &rows {
+            let Some(f) = stored_finding(r) else {
+                continue;
+            };
+            match r.status.as_str() {
+                "open" if r.round == e.last_round && f.severity.blocking() => e.open.push(f),
+                "disputed" => e.raised.push((
+                    r.round,
+                    Dispute {
+                        finding: f,
+                        reviewer: reviewer_of(r.attempt_id),
+                        rebuttal: r.note.clone().unwrap_or_default(),
+                    },
+                )),
+                "fixed" => e.fixed.push(f),
+                _ => {} // open in an earlier round, dismissed, nits: nothing to carry on
+            }
+        }
+        Ok(e)
     }
 
     /// The implementer's fix turn for `blocking`: records the findings it rebuts as
@@ -155,8 +282,11 @@ impl Run<'_> {
         reviewer: &str,
         round: u32,
         blocking: &[Finding],
-    ) -> Result<(String, Vec<Dispute>), Error> {
+    ) -> Result<Fix, Error> {
         let index = self.steps[i].index;
+        if !self.spend_debate_turn(index).await? {
+            return Ok(Fix::Unbudgeted);
+        }
         let Some(l) = live.as_mut() else {
             return Err(Error::Session("the attempt has no session".into()));
         };
@@ -166,6 +296,7 @@ impl Run<'_> {
             .await?
         {
             TurnEnd::Completed(r) => r.final_text,
+            TurnEnd::Failed(f) if out_of_quota(&f) => return Ok(Fix::Exhausted(f)),
             TurnEnd::Failed(_) | TurnEnd::Loop | TurnEnd::Stall(_) => {
                 // The fix turn did not finish: whatever is in the worktree must still
                 // pass verification before it is committed.
@@ -197,35 +328,41 @@ impl Run<'_> {
                 .settle_findings(&self.task.id, index, round, ids, "disputed")
                 .await?;
         }
-        Ok((answer, rebutted))
+        Ok(Fix::Answered(answer, rebutted))
     }
 
-    /// Runs verification after a fix; failures get the usual retry turns (§7.2).
-    /// `Ok(false)` when the retries are used up.
+    /// Runs verification after a fix; failures get the usual retry turns (§7.2) until
+    /// they stagnate.
     pub(crate) async fn reverify(
         &mut self,
         i: usize,
         a: &Attempt,
         agent: &Agent,
         live: &mut Option<Live>,
-        retries: &mut u32,
-    ) -> Result<bool, Error> {
+        progress: &mut Progress,
+    ) -> Result<Reverified, Error> {
         loop {
             let outcome = match self.verify(i).await? {
-                None => return Ok(true),
-                Some(o) if o.passed => return Ok(true),
+                None => return Ok(Reverified::Passed),
+                Some(o) if o.passed => {
+                    progress.passed();
+                    return Ok(Reverified::Passed);
+                }
                 Some(o) => o,
             };
+            if let Some(s) = self.failure_stagnates(&outcome, progress).await? {
+                return Ok(Reverified::Stagnated(s));
+            }
             if !self
                 .retry(
                     i,
                     a,
-                    retries,
+                    &mut progress.retries,
                     &format!("verification {} after a review fix", outcome.summary()),
                 )
                 .await?
             {
-                return Ok(false);
+                return Ok(Reverified::Exhausted);
             }
             let Some(l) = live.as_mut() else {
                 return Err(Error::Session("the attempt has no session".into()));
@@ -236,21 +373,26 @@ impl Run<'_> {
                     .await?,
                 TurnEnd::Completed(_)
             ) {
-                return Ok(false);
+                return Ok(Reverified::Exhausted);
             }
         }
     }
 
     /// One review round: route a reviewer of another provider, ask for findings in
-    /// `plan` mode, repair once.
+    /// `plan` mode, repair once. The reviewer's pool may lower `level`.
     async fn review_round(
         &mut self,
         i: usize,
         implementer: &Agent,
         round: u32,
         open: &[Finding],
+        level: &mut Level,
     ) -> Result<Round, Error> {
         let index = self.steps[i].index;
+        if !self.debate_left(index).await? {
+            self.review_finished(index, None, None, "skipped", &self.budget_reason());
+            return Ok(Round::Skipped);
+        }
         let reviewer = match self.e.cfg.router.route_independent(
             &self.task,
             &self.steps[i],
@@ -258,10 +400,19 @@ impl Run<'_> {
         ) {
             Ok(r) => r,
             Err(no) => {
-                self.review_finished(index, None, None, "skipped", &no.reason);
+                self.review_finished(index, None, None, "skipped", &skip_reason(&no));
                 return Ok(Round::Skipped);
             }
         };
+        if self.lower_for(level, index, &reviewer.pool) && round > self.depth(*level).review_rounds
+        {
+            let why = format!(
+                "the lowered debate has {} round(s)",
+                self.depth(*level).review_rounds
+            );
+            self.review_finished(index, None, None, "skipped", &why);
+            return Ok(Round::Skipped);
+        }
         let a = self
             .store()
             .start_attempt(NewAttempt {
@@ -355,6 +506,9 @@ impl Run<'_> {
     ) -> Result<Result<T, String>, Error> {
         let (mut kind, mut msg) = (TurnKind::Prompt, prompt.to_owned());
         for turn in 0..2 {
+            if !self.spend_debate_turn(index).await? {
+                return Ok(Err(self.budget_reason()));
+            }
             let Some(l) = live.as_mut() else {
                 return Err(Error::Session(format!("the {} has no session", judge.what)));
             };
@@ -364,18 +518,22 @@ impl Run<'_> {
             {
                 TurnEnd::Completed(r) => r,
                 TurnEnd::Failed(f) => {
-                    if matches!(f.kind, openchef_runtime::FailureKind::QuotaExhausted)
-                        && let Some(cb) = &self.e.cfg.pool_exhausted
-                    {
+                    let quota = out_of_quota(&f);
+                    if quota && let Some(cb) = &self.e.cfg.pool_exhausted {
                         cb(&judge_agent.pool, f.resets_at);
                     }
-                    return Ok(Err(format!(
+                    let why = format!(
                         "{} {} failed ({}): {}",
                         judge.what,
                         judge_agent.name,
                         f.kind.as_str(),
                         f.message
-                    )));
+                    );
+                    return Ok(Err(if quota {
+                        format!("skipped for quota: {why}")
+                    } else {
+                        why
+                    }));
                 }
                 TurnEnd::Loop | TurnEnd::Stall(_) => {
                     return Ok(Err(format!(
@@ -507,4 +665,64 @@ pub(crate) fn finding_rows(
             note: None,
         })
         .collect()
+}
+
+/// Whether a turn failed because its pool ran out (or keeps rate limiting).
+pub(crate) const fn out_of_quota(f: &Failure) -> bool {
+    matches!(
+        f.kind,
+        FailureKind::QuotaExhausted | FailureKind::RateLimited
+    )
+}
+
+/// Why no judge was routed: quota or none independent.
+pub(crate) fn skip_reason(no: &NoAgent) -> String {
+    if no.quota {
+        format!("skipped for quota: {}", no.reason)
+    } else {
+        no.reason.clone()
+    }
+}
+
+/// A stored finding back in the review's vocabulary; `None` for a row it never wrote.
+fn stored_finding(r: &FindingRow) -> Option<Finding> {
+    let severity = match r.severity.as_str() {
+        "blocker" => Severity::Blocker,
+        "major" => Severity::Major,
+        "nit" => Severity::Nit,
+        _ => return None,
+    };
+    Some(Finding {
+        id: r.finding.clone(),
+        severity,
+        file: r.file.clone(),
+        line: r.line,
+        contract: r.contract.clone(),
+        claim: r.claim.clone(),
+        evidence: r.evidence.clone(),
+        fix: r.fix.clone(),
+    })
+}
+
+/// The stagnation of findings reported again after they were fixed.
+fn reopened_stagnation(round: u32, reopened: &[&Finding]) -> Stagnation {
+    let ids: Vec<&str> = reopened.iter().map(|f| f.id.as_str()).collect();
+    let evidence: Vec<String> = reopened
+        .iter()
+        .map(|f| {
+            format!(
+                "{} [{}] {}: {}\n  evidence: {}",
+                f.id,
+                f.severity.as_str(),
+                f.file.as_deref().unwrap_or("unlocated"),
+                f.claim,
+                f.evidence
+            )
+        })
+        .collect();
+    Stagnation {
+        why: format!("finding(s) {} reported again after a fix", ids.join(", ")),
+        evidence: evidence.join("\n"),
+        findings: reopened.iter().map(|f| (round, (*f).clone())).collect(),
+    }
 }

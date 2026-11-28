@@ -327,7 +327,15 @@ fn write_detail(out: &mut dyn Write, d: &TaskDetail) -> std::io::Result<()> {
             t.worktree.as_deref().unwrap_or("-")
         )?;
     }
-    write!(out, "prompt   {}\n\n", first_line(&t.prompt, 100))?;
+    writeln!(out, "prompt   {}", first_line(&t.prompt, 100))?;
+    if d.debate_turns > 0 {
+        writeln!(
+            out,
+            "debate   {} of {} turns",
+            d.debate_turns, d.debate_budget
+        )?;
+    }
+    writeln!(out)?;
     // Step 0: the planner and the plan council.
     let council = latest_findings(&d.findings, 0);
     if !council.is_empty() || d.attempts.iter().any(|a| a.step == 0) {

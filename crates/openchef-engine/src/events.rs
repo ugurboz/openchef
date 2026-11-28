@@ -48,6 +48,9 @@ pub enum EventKind {
     /// `step`, `attempt`, `agent`, `status` (`ruled`, `skipped`), `message` (upheld and
     /// dismissed counts, or why it was skipped).
     ArbitrationFinished,
+    /// `step`, `attempt`, `agent` (the implementer), `message` (why): the step stopped
+    /// making progress; an escalation follows or the task needs attention (§7.5).
+    Stagnated,
 }
 
 impl EventKind {
@@ -72,6 +75,7 @@ impl EventKind {
             Self::CouncilFinished => "council_finished",
             Self::ArbitrationStarted => "arbitration_started",
             Self::ArbitrationFinished => "arbitration_finished",
+            Self::Stagnated => "stagnated",
         }
     }
 }

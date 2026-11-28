@@ -152,7 +152,15 @@ impl QuotaRouter {
     }
 }
 
-fn no_agent(reason: String, refused: &[Refusal]) -> NoAgent {
+/// Whether quota alone stops these candidates: some exist and none may work now.
+fn quota_bound(cands: &[Candidate]) -> bool {
+    !cands.is_empty()
+        && cands
+            .iter()
+            .all(|c| c.excluded || c.health == Health::Exhausted)
+}
+
+fn no_agent(reason: String, refused: &[Refusal], quota: bool) -> NoAgent {
     let resume_at = refused.iter().filter_map(|r| r.reset).min();
     let reason = if refused.is_empty() {
         reason
@@ -160,7 +168,11 @@ fn no_agent(reason: String, refused: &[Refusal]) -> NoAgent {
         let why: Vec<&str> = refused.iter().map(|r| r.reason.as_str()).collect();
         format!("{reason} ({})", why.join("; "))
     };
-    NoAgent { resume_at, reason }
+    NoAgent {
+        resume_at,
+        reason,
+        quota,
+    }
 }
 
 impl Router for QuotaRouter {
@@ -185,12 +197,14 @@ impl Router for QuotaRouter {
                     return Err(no_agent(
                         format!("pinned agent {pin:?} is not configured"),
                         &refused,
+                        false,
                     ));
                 }
                 Some(c) if c.excluded => {
                     return Err(no_agent(
                         format!("pinned agent {pin:?} cannot take the step now"),
                         &refused,
+                        true,
                     ));
                 }
                 Some(c) => c.agent.clone(),
@@ -211,17 +225,30 @@ impl Router for QuotaRouter {
                 choose(req, &cands, &mut counters)
             };
             decided
-                .map_err(|e| no_agent(e.to_string(), &refused))?
+                .map_err(|e| no_agent(e.to_string(), &refused, quota_bound(&cands)))?
                 .agent
         };
         let Some(a) = self.agents.iter().find(|a| a.name == pick) else {
-            return Err(no_agent(format!("agent {pick:?} vanished"), &refused));
+            return Err(no_agent(
+                format!("agent {pick:?} vanished"),
+                &refused,
+                false,
+            ));
         };
         Ok(self.effort(a, importance, &view, now))
     }
 
     fn agent_named(&self, name: &str) -> Option<Agent> {
         self.agents.iter().find(|a| a.name == name).cloned()
+    }
+
+    fn pressure(&self, pool: &str) -> Option<String> {
+        let profile = self.cfg.pools.get(pool)?.effort_profile;
+        if profile != openchef_config::EffortProfile::Auto {
+            return None;
+        }
+        let (health, _) = self.quota.view().health(pool, self.quota.now());
+        matches!(health, Health::Yellow | Health::Red).then(|| format!("pool {pool} is {health}"))
     }
 
     fn route_independent(&self, task: &Task, step: &Step, avoid: &Avoid) -> Result<Agent, NoAgent> {
@@ -257,10 +284,20 @@ impl Router for QuotaRouter {
             choose(req, &cands, &mut counters)
         };
         let pick = decided
-            .map_err(|e| no_agent(format!("no agent outside {avoid}: {e}"), &refused))?
+            .map_err(|e| {
+                no_agent(
+                    format!("no agent outside {avoid}: {e}"),
+                    &refused,
+                    quota_bound(&cands),
+                )
+            })?
             .agent;
         let Some(a) = self.agents.iter().find(|a| a.name == pick) else {
-            return Err(no_agent(format!("agent {pick:?} vanished"), &refused));
+            return Err(no_agent(
+                format!("agent {pick:?} vanished"),
+                &refused,
+                false,
+            ));
         };
         Ok(self.effort(a, importance, &view, now))
     }
@@ -389,6 +426,7 @@ mod tests {
                 },
             )]),
             quota: QuotaSwitches::default(),
+            debate: openchef_core::Debate::default(),
         }
     }
 
@@ -552,10 +590,44 @@ mod tests {
             .unwrap_or_else(|e| panic!("{e}"));
         assert_eq!(a.name, "gpt");
         q.set("chatgpt", 1.0, H4);
-        assert!(
-            r.route_independent(&task, &step, &openchef_engine::Avoid::runtimes(["claude"]))
-                .is_err(),
-            "never the same provider"
+        let no = r
+            .route_independent(&task, &step, &openchef_engine::Avoid::runtimes(["claude"]))
+            .expect_err("never the same provider");
+        assert!(no.quota, "gpt exists but quota refuses it: {no:?}");
+        let none = r
+            .route_independent(
+                &task,
+                &step,
+                &openchef_engine::Avoid::runtimes(["claude", "codex"]),
+            )
+            .expect_err("nobody is left");
+        assert!(!none.quota, "no candidate at all is not a quota refusal");
+    }
+
+    /// An `auto` pool in yellow or red lowers the debate it pays for (§7.5, D-040).
+    #[test]
+    fn pressure_from_auto_pools() {
+        let q = Arc::new(FakeQuota::default());
+        q.set("claude-max", 0.7, H4);
+        q.set("chatgpt", 0.1, H4);
+        let mut cfg = config(Strategy::Auto);
+        let r = QuotaRouter::new(&cfg, Arc::clone(&q) as Arc<dyn QuotaSource>);
+        assert_eq!(
+            r.pressure("claude-max").as_deref(),
+            Some("pool claude-max is yellow")
+        );
+        assert_eq!(r.pressure("chatgpt"), None, "green has room");
+        assert_eq!(r.pressure("unknown"), None);
+        q.set("chatgpt", 0.9, H4);
+        assert!(r.pressure("chatgpt").is_some(), "red");
+        if let Some(p) = cfg.pools.get_mut("claude-max") {
+            p.effort_profile = EffortProfile::Quality;
+        }
+        let r = QuotaRouter::new(&cfg, Arc::clone(&q) as Arc<dyn QuotaSource>);
+        assert_eq!(
+            r.pressure("claude-max"),
+            None,
+            "only the auto profile adapts"
         );
     }
 }

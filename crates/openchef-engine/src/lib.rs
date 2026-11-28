@@ -6,9 +6,12 @@
 
 pub mod arbiter;
 mod arbitrating;
+pub mod breakers;
 pub mod council;
 mod councilling;
+mod debate;
 mod engine;
+mod escalating;
 mod events;
 pub mod plan;
 mod planning;

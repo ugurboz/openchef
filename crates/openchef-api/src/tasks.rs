@@ -306,6 +306,12 @@ pub struct TaskDetail {
     /// Review findings, every round, in step and round order; older daemons send none.
     #[serde(default)]
     pub findings: Vec<FindingWire>,
+    /// Debate turns spent (§7.5); older daemons send none.
+    #[serde(default)]
+    pub debate_turns: u32,
+    /// The task's debate budget; 0 from older daemons.
+    #[serde(default)]
+    pub debate_budget: u32,
     /// An engine run is in progress.
     pub driving: bool,
 }
