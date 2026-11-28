@@ -536,6 +536,15 @@ fn ask(s: &Service, req: AskRequest, cancel: CancellationToken) -> Asked {
     tokio::spawn(async move { s.ask(req, &cancel).await })
 }
 
+/// The asker's result; a decided request wakes it at once, never by expiring.
+async fn asked(res: Asked) -> Approval {
+    tokio::time::timeout(Duration::from_secs(10), res)
+        .await
+        .expect("the asker missed the decision and waits for the request to expire")
+        .unwrap()
+        .unwrap()
+}
+
 async fn pending_one(s: &Service, id: &TaskId) -> Approval {
     let filter = ApprovalFilter {
         task: Some(id.clone()),
@@ -589,7 +598,7 @@ async fn ask_and_decide() {
         "answering a command: {wrong:?}"
     );
     s.decide(p.id, ApprovalStatus::Allowed, None).await.unwrap();
-    let got = res.await.unwrap().unwrap();
+    let got = asked(res).await;
     assert_eq!(got.status, ApprovalStatus::Allowed);
     assert_eq!(got.decided_by, Some(DecidedBy::User));
     let second = s.decide(p.id, ApprovalStatus::Denied, None).await;
@@ -628,13 +637,45 @@ async fn ask_and_decide() {
     s.decide(p.id, ApprovalStatus::Answered, Some("9090".into()))
         .await
         .unwrap();
-    assert_eq!(res.await.unwrap().unwrap().answer.as_deref(), Some("9090"));
+    assert_eq!(asked(res).await.answer.as_deref(), Some("9090"));
     assert_eq!(
         notes.lock().unwrap().len(),
         1,
         "{:?}",
         notes.lock().unwrap()
     );
+    stop(&s).await;
+}
+
+/// A decision made the moment the request is listed (an automatic approver is that
+/// fast) still wakes the agent: it does not wait for the request to expire.
+#[tokio::test(flavor = "multi_thread")]
+async fn instant_decision_wakes_the_asker() {
+    let e = env().await;
+    let s = e.service_deps(|d| d.approval_timeout = Some(Duration::from_secs(60)));
+    let id = running_task(&e, &s).await;
+    let filter = ApprovalFilter {
+        task: Some(id.clone()),
+        pending: true,
+        limit: None,
+    };
+    for _ in 0..200 {
+        let res = ask(
+            &s,
+            request(&id, ApprovalKind::Command, Some("Bash"), "make"),
+            CancellationToken::new(),
+        );
+        let p = loop {
+            if let Some(p) = s.approvals(filter.clone()).await.unwrap().pop() {
+                break p;
+            }
+            tokio::task::yield_now().await;
+        };
+        s.decide(p.id, ApprovalStatus::Allowed, None).await.unwrap();
+        let got = asked(res).await;
+        assert_eq!(got.status, ApprovalStatus::Allowed);
+        assert_eq!(got.decided_by, Some(DecidedBy::User));
+    }
     stop(&s).await;
 }
 
