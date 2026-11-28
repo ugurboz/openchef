@@ -634,16 +634,14 @@ async fn ask_and_decide() {
     q.options = vec!["8080".into()];
     let res = ask(&s, q, CancellationToken::new());
     let p = pending_one(&s, &id).await;
+    // Notified while pending: a request settled before that point notifies no one.
+    wait_for(async || !notes.lock().unwrap().is_empty()).await;
     s.decide(p.id, ApprovalStatus::Answered, Some("9090".into()))
         .await
         .unwrap();
     assert_eq!(asked(res).await.answer.as_deref(), Some("9090"));
-    assert_eq!(
-        notes.lock().unwrap().len(),
-        1,
-        "{:?}",
-        notes.lock().unwrap()
-    );
+    let sent = notes.lock().unwrap().clone();
+    assert_eq!(sent.len(), 1, "{sent:?}");
     stop(&s).await;
 }
 
