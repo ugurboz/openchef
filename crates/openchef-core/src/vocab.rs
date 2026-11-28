@@ -114,6 +114,33 @@ string_enum! {
 }
 
 string_enum! {
+    /// What an attempt's agent does (D-037). Task-level roles (`plan`, `council`,
+    /// `audit`) belong to step 0.
+    pub enum AttemptRole: "attempt role" {
+        /// Implements a step.
+        Implement => "implement",
+        /// Writes the plan.
+        Plan => "plan",
+        /// Reviews a step's diff.
+        Review => "review",
+        /// Critiques the plan.
+        Council => "council",
+        /// Settles a disputed finding.
+        Arbiter => "arbiter",
+        /// Reviews the whole task's diff.
+        Audit => "audit",
+    }
+}
+
+impl AttemptRole {
+    /// Whether the role works on the task as a whole (step index 0).
+    #[must_use]
+    pub const fn task_level(self) -> bool {
+        matches!(self, Self::Plan | Self::Council | Self::Audit)
+    }
+}
+
+string_enum! {
     /// An agent's capability tier (§7.4). Ordered weakest first.
     pub enum Tier: "tier" {
         /// Haiku, Flash, free models.

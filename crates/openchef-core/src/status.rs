@@ -31,7 +31,7 @@ impl TaskStatus {
     /// sessions and turns only then.
     #[must_use]
     pub const fn is_active(self) -> bool {
-        matches!(self, Self::Running | Self::Reviewing)
+        matches!(self, Self::Planning | Self::Running | Self::Reviewing)
     }
 
     /// The final task states, sorted by their string form.
@@ -56,7 +56,14 @@ impl StateMachine for TaskStatus {
             Running, WaitingQuota,
         };
         match self {
-            Planning => &[AwaitingApproval, Failed, Cancelled],
+            // A planner can run out of quota or fail like an implementer (D-037).
+            Planning => &[
+                AwaitingApproval,
+                WaitingQuota,
+                NeedsAttention,
+                Failed,
+                Cancelled,
+            ],
             Running => &[
                 Reviewing,
                 Done,
@@ -67,7 +74,9 @@ impl StateMachine for TaskStatus {
             ],
             // A review that requests changes sends the task back to running (§7.5).
             Reviewing => &[Running, Done, NeedsAttention, Failed, Cancelled],
-            AwaitingApproval | WaitingQuota | NeedsAttention => &[Running, Cancelled],
+            // Back to planning: a task that stopped before its plan was approved, or a
+            // plan the user sent back to the planner.
+            AwaitingApproval | WaitingQuota | NeedsAttention => &[Running, Planning, Cancelled],
             Done | Failed | Cancelled => &[],
         }
     }

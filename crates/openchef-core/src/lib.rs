@@ -28,4 +28,6 @@ pub use id::TaskId;
 pub use machine::{Entity, StateMachine};
 pub use status::{AttemptStatus, SessionState, StepStatus, TaskStatus, TurnStatus};
 pub use task::{Attempt, MAX_STEPS, Session, Step, Task, Turn, validate_plan};
-pub use vocab::{Backend, Effort, Importance, Kind, Mode, PermissionMode, Tier, TurnKind};
+pub use vocab::{
+    AttemptRole, Backend, Effort, Importance, Kind, Mode, PermissionMode, Tier, TurnKind,
+};

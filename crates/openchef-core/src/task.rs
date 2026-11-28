@@ -5,8 +5,8 @@ use std::path::PathBuf;
 use time::OffsetDateTime;
 
 use crate::{
-    AttemptStatus, Backend, Error, Importance, Kind, Mode, PermissionMode, SessionState,
-    StepStatus, TaskId, TaskStatus, TurnKind, TurnStatus,
+    AttemptRole, AttemptStatus, Backend, Error, Importance, Kind, Mode, PermissionMode,
+    SessionState, StepStatus, TaskId, TaskStatus, TurnKind, TurnStatus,
 };
 
 /// The largest number of steps a plan may have (§4: keeps plans reviewable).
@@ -128,8 +128,10 @@ pub struct Attempt {
     pub id: i64,
     /// The task.
     pub task_id: TaskId,
-    /// The step's index.
+    /// The step's index; 0 for task-level roles.
     pub step_index: u32,
+    /// What the agent does.
+    pub role: AttemptRole,
     /// The routed agent's name.
     pub agent: String,
     /// The agent's runtime (`claude`, `codex`, `agy`).
