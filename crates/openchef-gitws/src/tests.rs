@@ -333,6 +333,31 @@ async fn capture_patch_and_reset() {
 }
 
 #[tokio::test]
+async fn state_identifies_content() {
+    let mut f = new_repo().await;
+    let (wt, _base) = new_worktree(&mut f).await;
+    let clean = wt.state().await.unwrap();
+    write(&wt.path.join("a.txt"), "one\n");
+    let one = wt.state().await.unwrap();
+    write(&wt.path.join("a.txt"), "two\n");
+    let two = wt.state().await.unwrap();
+    write(&wt.path.join(CONTROL_DIR).join("note"), "ignored\n");
+    assert_eq!(
+        wt.state().await.unwrap(),
+        two,
+        "the control dir is not content"
+    );
+    write(&wt.path.join("a.txt"), "one\n");
+    assert_eq!(wt.state().await.unwrap(), one, "back to an earlier state");
+    assert!(clean != one && one != two);
+    assert_eq!(
+        wt.changed().await.unwrap(),
+        ["a.txt"],
+        "the index is left as HEAD's"
+    );
+}
+
+#[tokio::test]
 async fn reset_moves_back_to_verified_commit() {
     let mut f = new_repo().await;
     let (wt, base) = new_worktree(&mut f).await;
