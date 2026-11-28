@@ -73,6 +73,9 @@ pub struct SessionSpec {
     pub log_path: Option<PathBuf>,
     /// Called for every process the session starts.
     pub on_spawn: Option<OnSpawn>,
+    /// Starts every process of the session inside OpenChef's OS sandbox (§21.3).
+    /// The sandbox replaces the CLI's own, which cannot nest (D-032).
+    pub confine: Option<openchef_procs::Confine>,
 }
 
 impl fmt::Debug for SessionSpec {
@@ -85,11 +88,24 @@ impl fmt::Debug for SessionSpec {
             .field("deny_rules", &self.deny_rules)
             .field("ask_rules", &self.ask_rules)
             .field("web_access", &self.web_access)
+            .field("confined", &self.confine.is_some())
             .finish_non_exhaustive()
     }
 }
 
 impl SessionSpec {
+    /// `spec` as the session's sandbox starts it; unchanged without one.
+    ///
+    /// # Errors
+    ///
+    /// Why the sandbox refused: the process must not start.
+    pub fn confined(&self, spec: openchef_procs::Spec) -> Result<openchef_procs::Spec, String> {
+        match &self.confine {
+            Some(confine) => confine(spec),
+            None => Ok(spec),
+        }
+    }
+
     /// Reports a newly started process to `on_spawn`. Adapters call it right after the
     /// start and before the first write, and kill the process on error.
     pub async fn spawned(&self, id: Identity) -> Result<(), Error> {

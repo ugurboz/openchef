@@ -141,6 +141,7 @@ fn harness(scenario: &str) -> Harness {
         }),
         log_path: Some(dir.path().join("raw.jsonl")),
         on_spawn: None,
+        confine: None,
     };
     Harness {
         runtime: AgyRuntime::new(options(settings.clone())),

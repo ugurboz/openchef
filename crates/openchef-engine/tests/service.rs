@@ -145,6 +145,7 @@ impl Env {
                 ask_user: None,
                 log_path: None,
                 on_spawn: None,
+                confine: None,
             })
         });
         let mut cfg = Config::new(
@@ -163,6 +164,7 @@ impl Env {
             approval_timeout: None,
             notify: None,
             tap: None,
+            sandbox_check: None,
         };
         tweak(&mut deps);
         Service::new(deps).unwrap()

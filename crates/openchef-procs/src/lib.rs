@@ -23,7 +23,7 @@ mod process;
 mod sys;
 
 pub use error::Error;
-pub use process::{DEFAULT_GRACE, Exit, Identity, Process, Spec, Stderr, StdinWriter};
+pub use process::{Confine, DEFAULT_GRACE, Exit, Identity, Process, Spec, Stderr, StdinWriter};
 
 /// The start token of a running process: an opaque, platform-specific value derived from
 /// the process start time that matches only this instance of `pid`.

@@ -4,7 +4,7 @@
 use std::time::Duration;
 
 use openchef_core::{
-    Attempt, AttemptStatus, SessionState, StepStatus, TaskStatus, TurnKind, TurnStatus,
+    Attempt, AttemptStatus, Backend, SessionState, StepStatus, TaskStatus, TurnKind, TurnStatus,
 };
 use openchef_gitws::{CONTROL_DIR, StepCommit};
 use openchef_runtime::{Failure, FailureKind, SessionRef};
@@ -605,13 +605,26 @@ impl Run<'_> {
         ev.step = Some(s.index);
         ev.message = Some(command.clone());
         self.publish(ev);
-        let spec = verify::Spec {
+        let mut spec = verify::Spec {
             command,
             dir: self.worktree()?.path.clone(),
             env: self.e.cfg.verify_env.clone(),
             timeout: Some(self.e.cfg.limits.verify_timeout),
             max_output: None,
+            confine: None,
         };
+        if self.task.backend == Backend::Sandbox {
+            let Some(confine_for) = &self.e.cfg.confine_verify else {
+                // Fail closed: a sandboxed task never verifies unconfined.
+                return Err(Error::Config(
+                    "this daemon has no sandbox for verification".into(),
+                ));
+            };
+            let (confine, extra) = confine_for(&self.task).map_err(Error::Config)?;
+            spec.env.retain(|(k, _)| !extra.iter().any(|(e, _)| e == k));
+            spec.env.extend(extra);
+            spec.confine = Some(confine);
+        }
         let outcome = match verify::run(&spec, self.shutdown).await {
             Ok(o) => o,
             Err(verify::Error::Cancelled { .. }) => return Err(Error::Shutdown),

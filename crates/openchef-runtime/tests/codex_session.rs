@@ -98,6 +98,7 @@ fn harness(scenario: &str) -> Harness {
         ask_user: None,
         log_path: Some(dir.path().join("raw.jsonl")),
         on_spawn: None,
+        confine: None,
     };
     let runtime = CodexRuntime::new(CodexOptions {
         binary: env!("CARGO_BIN_EXE_fake-codex").into(),
@@ -540,6 +541,7 @@ async fn open_validation() {
         h.runtime
             .open(SessionSpec {
                 on_spawn: Some(rejecting),
+                confine: None,
                 ..h.spec.clone()
             })
             .await

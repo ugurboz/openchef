@@ -66,6 +66,7 @@ pub(crate) fn run(
             verify: args.verify.clone(),
             agent: args.agent.clone(),
             permission_mode: args.permission_mode.clone(),
+            sandbox: args.sandbox,
         };
         let t = match c.run(&params).await {
             Ok(t) => t,

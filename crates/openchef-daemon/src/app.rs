@@ -9,7 +9,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use openchef_config::{Config, Paths, Phase};
-use openchef_core::{APPROVAL_TIMEOUT, Task};
+use openchef_core::{APPROVAL_TIMEOUT, Backend, Task};
 use openchef_engine::service::{Deps, Service};
 use openchef_engine::{Agent, Config as EngineConfig, DynRuntime, Runtimes, SpecFor};
 use openchef_runtime::agy::{AgyOptions, AgyRuntime};
@@ -29,6 +29,7 @@ use crate::quota::{
     quota_methods,
 };
 use crate::router::QuotaRouter;
+use crate::sandbox::{Sandboxes, with_env};
 use crate::{Init, OnStop, Options, STOP_TIMEOUT, Services, service_methods};
 
 /// How much longer than the approval queue an `ask_user` call may take.
@@ -171,7 +172,14 @@ fn build(
     let queue = LateQueue::default();
     let exe =
         std::env::current_exe().map_err(|e| format!("locate the openchef executable: {e}"))?;
+    let sandboxes = Sandboxes {
+        exe: exe.clone(),
+        home: std::env::home_dir().ok_or("cannot locate the user's home directory")?,
+        paths: paths.clone(),
+        private: policies.private.clone(),
+    };
     let session = SessionDeps {
+        sandboxes: sandboxes.clone(),
         exe,
         home: paths.home.clone(),
         env: std::env::vars().collect(),
@@ -182,6 +190,7 @@ fn build(
     let spec_for: SpecFor = Arc::new(move |t: &Task, a: &Agent| session.spec(t, a));
     let mut engine = EngineConfig::new(store.clone(), runtimes, router, spec_for, &paths.home);
     engine.verify_env = openchef_engine::verify::minimal_env(std::env::vars_os(), &[]);
+    engine.confine_verify = Some(Arc::new(move |t: &Task| sandboxes.verify(t)));
     engine.pool_exhausted = Some({
         let q = quota.clone();
         Arc::new(move |pool: &str, until: Option<OffsetDateTime>| q.exhausted(pool, until))
@@ -206,6 +215,11 @@ fn build(
         approval_timeout: None,
         notify: desktop_notifier(),
         tap: Some(Arc::new(tap)),
+        sandbox_check: Some(Arc::new(|| {
+            openchef_sandbox::check()
+                .map(|_| ())
+                .map_err(|e| e.to_string())
+        })),
     })
     .map_err(|e| e.to_string())?;
     queue.set(service.clone());
@@ -214,6 +228,8 @@ fn build(
 
 /// What every session spec is built from.
 struct SessionDeps {
+    /// Policies for sandboxed tasks.
+    sandboxes: Sandboxes,
     /// This executable, which serves `ask_user` (`openchef mcp ask-user`).
     exe: PathBuf,
     /// The OpenChef home, passed on so the server finds this daemon's socket.
@@ -233,6 +249,14 @@ impl SessionDeps {
     /// an isolated worktree (§9.3).
     fn spec(&self, t: &Task, a: &Agent) -> Result<SessionSpec, String> {
         let policy = self.policies.session(t)?;
+        let mut env = session_env(&self.env, self.pools.get(&a.pool));
+        let confine = if t.backend == Backend::Sandbox {
+            let c = self.sandboxes.session(t, &a.runtime)?;
+            env = with_env(env, c.env);
+            Some(c.confine)
+        } else {
+            None
+        };
         Ok(SessionSpec {
             dir: t.worktree.clone().unwrap_or_default(),
             model: None,
@@ -241,7 +265,7 @@ impl SessionDeps {
             deny_rules: policy.deny_rules,
             ask_rules: policy.ask_rules,
             web_access: false,
-            env: session_env(&self.env, self.pools.get(&a.pool)),
+            env,
             approver: Arc::new(PolicyApprover {
                 queue: Arc::new(self.queue.clone()),
                 eval: policy.eval,
@@ -251,6 +275,7 @@ impl SessionDeps {
             ask_user: Some(self.ask_user(t, a)),
             log_path: None,
             on_spawn: None,
+            confine,
         })
     }
 
@@ -364,6 +389,13 @@ mod tests {
         let dir = tempfile::tempdir().unwrap_or_else(|e| panic!("{e}"));
         let (policies, ws) = crate::policy::tests::test_policies(dir.path(), "");
         let session = super::SessionDeps {
+            sandboxes: crate::sandbox::Sandboxes {
+                exe: "/bin/openchef".into(),
+                home: dir.path().to_path_buf(),
+                paths: openchef_config::Paths::in_home(&dir.path().join("oc"))
+                    .unwrap_or_else(|e| panic!("{e}")),
+                private: Vec::new(),
+            },
             exe: "/bin/openchef".into(),
             home: dir.path().join("h"),
             env: Vec::new(),

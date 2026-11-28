@@ -94,6 +94,7 @@ async fn replay(name: &str) -> Replay {
         ask_user: None,
         log_path: None,
         on_spawn: None,
+        confine: None,
     };
     let session = SessionRef {
         runtime: "claude".into(),

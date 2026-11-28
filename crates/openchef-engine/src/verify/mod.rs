@@ -30,7 +30,7 @@ const STOP_GRACE: Duration = Duration::from_secs(2);
 const DRAIN_WAIT: Duration = Duration::from_secs(2);
 
 /// One verification run.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct Spec {
     /// A shell command line, e.g. `cargo test`.
     pub command: String,
@@ -42,6 +42,19 @@ pub struct Spec {
     pub timeout: Option<Duration>,
     /// Output bytes kept; [`DEFAULT_MAX_OUTPUT`] when `None`.
     pub max_output: Option<usize>,
+    /// Starts the command inside OpenChef's OS sandbox (§21.3).
+    pub confine: Option<openchef_procs::Confine>,
+}
+
+impl std::fmt::Debug for Spec {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Spec")
+            .field("command", &self.command)
+            .field("dir", &self.dir)
+            .field("timeout", &self.timeout)
+            .field("confined", &self.confine.is_some())
+            .finish_non_exhaustive()
+    }
 }
 
 /// The outcome of a run that started. A failing command is an outcome with `passed`
@@ -208,6 +221,12 @@ pub async fn run(spec: &Spec, cancel: &CancellationToken) -> Result<Outcome, Err
         dir: Some(spec.dir.clone()),
         env: spec.env.clone(),
         stderr: Stderr::Piped,
+    };
+    let process_spec = match &spec.confine {
+        None => process_spec,
+        Some(confine) => confine(process_spec).map_err(|reason| {
+            Error::InvalidSpec(format!("the sandbox refused the command: {reason}"))
+        })?,
     };
     let start = Instant::now();
     let started = tokio::task::spawn_blocking(move || Process::start(process_spec)).await;

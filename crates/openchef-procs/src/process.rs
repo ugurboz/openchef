@@ -62,6 +62,10 @@ pub struct Spec {
     pub stderr: Stderr,
 }
 
+/// Rewrites a process's spec before it starts, e.g. to start it inside OpenChef's OS
+/// sandbox (§21.3). An error refuses to start the process: nothing runs unconfined.
+pub type Confine = std::sync::Arc<dyn Fn(Spec) -> Result<Spec, String> + Send + Sync>;
+
 /// How a process ended.
 #[derive(Debug, Clone)]
 pub enum Exit {

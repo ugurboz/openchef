@@ -28,7 +28,35 @@ pub(crate) struct Report {
     pub(crate) paths: Paths,
     pub(crate) config: ConfigReport,
     pub(crate) runtimes: Vec<RuntimeStatus>,
+    pub(crate) sandbox: SandboxReport,
     pub(crate) healthy: bool,
+}
+
+/// Whether `--sandbox` can run here (§21.3); optional, so it never makes the report
+/// unhealthy.
+#[derive(Debug, Serialize)]
+pub(crate) struct SandboxReport {
+    pub(crate) available: bool,
+    pub(crate) detail: String,
+}
+
+fn sandbox(deps: &Deps) -> SandboxReport {
+    let checked = match &deps.sandbox {
+        Some(probe) => probe(),
+        None => openchef_sandbox::check()
+            .map(|s| format!("{}: {}", s.mechanism, s.detail))
+            .map_err(|e| e.to_string()),
+    };
+    match checked {
+        Ok(detail) => SandboxReport {
+            available: true,
+            detail,
+        },
+        Err(detail) => SandboxReport {
+            available: false,
+            detail,
+        },
+    }
 }
 
 pub(crate) fn report(deps: &Deps, paths: &Paths) -> Report {
@@ -57,6 +85,7 @@ pub(crate) fn report(deps: &Deps, paths: &Paths) -> Report {
         paths: paths.clone(),
         config,
         runtimes,
+        sandbox: sandbox(deps),
         healthy,
     }
 }
@@ -126,6 +155,15 @@ fn render(out: &mut dyn Write, r: &Report) -> anyhow::Result<()> {
         ]);
     }
     write!(out, "\n{}", table(&rows))?;
+    if r.sandbox.available {
+        writeln!(out, "\nSandbox: available ({})", r.sandbox.detail)?;
+    } else {
+        writeln!(
+            out,
+            "\nSandbox: unavailable ({}); `--sandbox` tasks are refused",
+            r.sandbox.detail
+        )?;
+    }
     if !r.healthy {
         if r.config.status == ConfigStatus::Invalid {
             writeln!(

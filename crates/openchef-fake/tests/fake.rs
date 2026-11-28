@@ -68,6 +68,7 @@ fn spec_with(approver: Scripted, dir: PathBuf) -> SessionSpec {
         ask_user: None,
         log_path: None,
         on_spawn: None,
+        confine: None,
     }
 }
 
@@ -385,6 +386,7 @@ async fn open_errors_resume_and_on_spawn() {
     let s = rt
         .open(SessionSpec {
             on_spawn: Some(hook),
+            confine: None,
             ..spec(std::env::temp_dir())
         })
         .await
@@ -417,6 +419,7 @@ async fn open_errors_resume_and_on_spawn() {
     assert!(
         rt.open(SessionSpec {
             on_spawn: Some(rejecting),
+            confine: None,
             ..spec(std::env::temp_dir())
         })
         .await
