@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use openchef_config::Paths;
-use openchef_core::{Mode, PermissionMode, Task};
+use openchef_core::{AttemptRole, Mode, PermissionMode, Task};
 use openchef_permissions::Evaluator;
 use openchef_runtime::INVARIANT_DENY_RULES;
 
@@ -75,8 +75,9 @@ impl Policies {
             .map_err(|e| e.to_string())
     }
 
-    /// The policy for a session of `t`, which must have its worktree.
-    pub(crate) fn session(&self, t: &Task) -> Result<SessionPolicy, String> {
+    /// The policy for a session of `t` in `role`; `t` must have its worktree. Every
+    /// role but `implement` reads only: it runs in `plan` mode whatever the task's mode.
+    pub(crate) fn session(&self, t: &Task, role: AttemptRole) -> Result<SessionPolicy, String> {
         let mut policy = openchef_permissions::load(Some(&self.settings), Some(&t.repo_root))
             .map_err(|e| e.to_string())?;
         let Some(workspace) = &t.worktree else {
@@ -86,7 +87,12 @@ impl Policies {
             return Err(BYPASS_OUTSIDE_WORKTREE.into());
         }
         // The task's mode, chosen when it was created, wins over defaultMode.
-        policy.mode = t.permissions;
+        let mode = if role == AttemptRole::Implement {
+            t.permissions
+        } else {
+            PermissionMode::Plan
+        };
+        policy.mode = mode;
         let deny_rules = INVARIANT_DENY_RULES
             .iter()
             .map(|r| (*r).to_owned())
@@ -96,7 +102,7 @@ impl Policies {
         let eval = Evaluator::new(policy, workspace, &self.home, self.private.clone())
             .map_err(|e| e.to_string())?;
         Ok(SessionPolicy {
-            mode: t.permissions,
+            mode,
             eval: Arc::new(eval),
             deny_rules,
             ask_rules,
@@ -165,7 +171,10 @@ pub(crate) mod tests {
         );
         assert_eq!(pols.default_mode(&ws), Ok(PermissionMode::AcceptEdits));
         let ps = pols
-            .session(&test_task(&ws, PermissionMode::Manual))
+            .session(
+                &test_task(&ws, PermissionMode::Manual),
+                openchef_core::AttemptRole::Implement,
+            )
             .unwrap_or_else(|e| panic!("{e}"));
         // The task's mode wins; deny and ask rules reach the CLI natively, after the
         // invariants.
@@ -181,23 +190,61 @@ pub(crate) mod tests {
         let mut team = test_task(&ws, PermissionMode::BypassPermissions);
         team.mode = Mode::Team;
         assert_eq!(
-            pols.session(&team).err().as_deref(),
+            pols.session(&team, openchef_core::AttemptRole::Implement)
+                .err()
+                .as_deref(),
             Some(BYPASS_OUTSIDE_WORKTREE)
         );
         let mut fresh = test_task(&ws, PermissionMode::Manual);
         fresh.worktree = None;
         assert!(
-            pols.session(&fresh).is_err(),
+            pols.session(&fresh, openchef_core::AttemptRole::Implement)
+                .is_err(),
             "a session without a workspace"
         );
 
         let other = tempfile::tempdir().unwrap_or_else(|e| panic!("{e}"));
         let (bad, ws2) = test_policies(other.path(), "[permissions]\ndeny = [\"Bash(\"]\n");
         assert!(
-            bad.session(&test_task(&ws2, PermissionMode::Manual))
-                .is_err(),
+            bad.session(
+                &test_task(&ws2, PermissionMode::Manual),
+                openchef_core::AttemptRole::Implement
+            )
+            .is_err(),
             "a broken deny rule loaded"
         );
+    }
+
+    /// Planners, critics and reviewers read only: their sessions run in `plan` mode
+    /// whatever the task's mode, so the evaluator refuses their edits (D-037).
+    #[test]
+    fn reading_roles_run_in_plan_mode() {
+        use openchef_permissions::{Decision, Request};
+        let dir = tempfile::tempdir().unwrap_or_else(|e| panic!("{e}"));
+        let (pols, ws) = test_policies(dir.path(), "");
+        let t = test_task(&ws, PermissionMode::AcceptEdits);
+        let edit = Request {
+            tool: "Edit".into(),
+            command: None,
+            paths: vec![ws.join("a.rs")],
+            url: None,
+        };
+        let implement = pols
+            .session(&t, openchef_core::AttemptRole::Implement)
+            .unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(implement.eval.evaluate(&edit).decision, Decision::Allow);
+        for role in [
+            openchef_core::AttemptRole::Plan,
+            openchef_core::AttemptRole::Review,
+        ] {
+            let p = pols.session(&t, role).unwrap_or_else(|e| panic!("{e}"));
+            assert_eq!(p.mode, PermissionMode::Plan, "{role}");
+            assert_eq!(
+                p.eval.evaluate(&edit).decision,
+                Decision::Deny,
+                "{role} may not edit"
+            );
+        }
     }
 
     #[test]

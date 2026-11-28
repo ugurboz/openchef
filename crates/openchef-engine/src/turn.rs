@@ -22,7 +22,8 @@ async fn poll_optional<F: Future + Unpin>(f: &mut Option<F>) -> F::Output {
 /// How a turn ended from the engine's point of view.
 #[derive(Debug)]
 pub(crate) enum TurnEnd {
-    Completed,
+    /// The turn completed with this result.
+    Completed(Box<openchef_runtime::TurnResult>),
     /// The CLI reported a failure.
     Failed(Failure),
     /// OpenChef interrupted a tool-call loop.
@@ -43,6 +44,7 @@ impl Run<'_> {
         agent: &Agent,
         kind: TurnKind,
         msg: &str,
+        schema: Option<&serde_json::Value>,
     ) -> Result<TurnEnd, Error> {
         let lim = self.e.cfg.limits;
         let row = self.store().begin_turn(live.row, kind, msg).await?;
@@ -55,11 +57,13 @@ impl Run<'_> {
                 deadline.cancel();
             })
         };
-        let result = self.stream_turn(live, a, agent, msg, &deadline).await;
+        let result = self
+            .stream_turn(live, a, agent, msg, schema, &deadline)
+            .await;
         timer.abort();
         let end = result?;
         let (status, outcome) = match &end {
-            TurnEnd::Completed => (TurnStatus::Completed, "completed".to_owned()),
+            TurnEnd::Completed(_) => (TurnStatus::Completed, "completed".to_owned()),
             TurnEnd::Failed(f) => (TurnStatus::Failed, f.kind.as_str().to_owned()),
             TurnEnd::Loop => (TurnStatus::Interrupted, "loop".to_owned()),
             TurnEnd::Stall(why) => (TurnStatus::Interrupted, format!("stall: {why}")),
@@ -75,12 +79,13 @@ impl Run<'_> {
         a: &Attempt,
         agent: &Agent,
         msg: &str,
+        schema: Option<&serde_json::Value>,
         deadline: &CancellationToken,
     ) -> Result<TurnEnd, Error> {
         let lim = self.e.cfg.limits;
         let input = TurnInput {
             text: msg.to_owned(),
-            output_schema: None,
+            output_schema: schema.cloned(),
         };
         let mut rx = match live.session.turn(input, deadline.clone()).await {
             Ok(rx) => rx,
@@ -184,7 +189,7 @@ impl Run<'_> {
                 "the turn ended without a result",
             )),
             // Completed despite an interrupt: the work is done; verification decides.
-            (Some(EventBody::TurnCompleted(_)), _) => TurnEnd::Completed,
+            (Some(EventBody::TurnCompleted(r)), _) => TurnEnd::Completed(Box::new(r)),
             (Some(_), Some(why)) => why,
             (Some(EventBody::TurnFailed(f)), None)
                 if f.kind == FailureKind::Timeout && deadline.is_cancelled() =>

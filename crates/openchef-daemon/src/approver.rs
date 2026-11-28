@@ -487,7 +487,7 @@ mod tests {
         ];
         for (mode, expects) in want {
             let ps = pols
-                .session(&test_task(&ws, mode))
+                .session(&test_task(&ws, mode), openchef_core::AttemptRole::Implement)
                 .unwrap_or_else(|e| panic!("{mode}: {e}"));
             for (what, expect) in order.iter().zip(expects) {
                 for (agent, r) in &shapes[what] {
@@ -515,7 +515,10 @@ mod tests {
         let dir = tempfile::tempdir().unwrap_or_else(|e| panic!("{e}"));
         let (pols, ws) = test_policies(dir.path(), "");
         let ps = pols
-            .session(&test_task(&ws, PermissionMode::AcceptEdits))
+            .session(
+                &test_task(&ws, PermissionMode::AcceptEdits),
+                openchef_core::AttemptRole::Implement,
+            )
             .unwrap_or_else(|e| panic!("{e}"));
         let command = "go test ./...\nrm -rf /tmp/x";
         let cmd = req(RequestKind::Command, "Bash", Some(command), &[]);
@@ -597,7 +600,10 @@ mod tests {
         let dir = tempfile::tempdir().unwrap_or_else(|e| panic!("{e}"));
         let (pols, ws) = test_policies(dir.path(), "");
         let ps = pols
-            .session(&test_task(&ws, PermissionMode::Manual))
+            .session(
+                &test_task(&ws, PermissionMode::Manual),
+                openchef_core::AttemptRole::Implement,
+            )
             .unwrap_or_else(|e| panic!("{e}"));
         let make = req(RequestKind::Command, "Bash", Some("make"), &[]);
         let failing = |fail: fn() -> ServiceError| {

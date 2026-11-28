@@ -131,23 +131,24 @@ impl Env {
             ],
             cooldown: None,
         });
-        let spec_for: openchef_engine::SpecFor = Arc::new(|_: &Task, _: &Agent| {
-            Ok(SessionSpec {
-                dir: PathBuf::new(),
-                model: None,
-                effort: None,
-                mode: PermissionMode::Manual,
-                deny_rules: Vec::new(),
-                ask_rules: Vec::new(),
-                web_access: false,
-                env: Vec::new(),
-                approver: Arc::new(AllowAll),
-                ask_user: None,
-                log_path: None,
-                on_spawn: None,
-                confine: None,
-            })
-        });
+        let spec_for: openchef_engine::SpecFor =
+            Arc::new(|_: &Task, _: &Agent, _: openchef_core::AttemptRole| {
+                Ok(SessionSpec {
+                    dir: PathBuf::new(),
+                    model: None,
+                    effort: None,
+                    mode: PermissionMode::Manual,
+                    deny_rules: Vec::new(),
+                    ask_rules: Vec::new(),
+                    web_access: false,
+                    env: Vec::new(),
+                    approver: Arc::new(AllowAll),
+                    ask_user: None,
+                    log_path: None,
+                    on_spawn: None,
+                    confine: None,
+                })
+            });
         let mut cfg = Config::new(
             self.store.clone(),
             runtimes,
@@ -729,6 +730,199 @@ async fn restart_expires_pending_requests() {
         past.iter().any(|ev| ev.kind == EventKind::ApprovalDecided
             && ev.approval.as_ref().is_some_and(|a| a.id == p.id)),
         "the expiry was not logged"
+    );
+    stop(&second).await;
+}
+
+/// A plan document as a planner answers it (final text).
+fn plan_answer(steps: &[(&str, &str)]) -> String {
+    let steps: Vec<serde_json::Value> = steps
+        .iter()
+        .map(|(title, verify)| {
+            serde_json::json!({"title": title, "prompt": format!("Do: {title}"), "files": ["out.txt"],
+                "verify": verify, "size": "small", "importance": "normal", "reason": "needed"})
+        })
+        .collect();
+    format!(
+        "Here is the plan:\n```json\n{}\n```",
+        serde_json::json!({"title": "Build it", "steps": steps})
+    )
+}
+
+/// R5.1: a planner's plan waits for approval, runs every step once approved, and the
+/// planner's attempt is recorded at step 0 with the `plan` role.
+#[tokio::test(flavor = "multi_thread")]
+async fn pipeline_plans_and_runs_after_approval() {
+    let e = env().await;
+    let s = e.service();
+    e.claude.push([Turn::completed(plan_answer(&[
+        ("first", "true"),
+        ("second", "true"),
+    ]))]);
+    let t = s.pipeline(e.run("build it"), false).await.unwrap();
+    assert_eq!(t.status, TaskStatus::Planning);
+    e.wait_status(&t.id, TaskStatus::AwaitingApproval).await;
+    let (past, sub) = s.watch(&t.id, true).await.unwrap();
+    s.unwatch(&sub);
+    assert!(
+        past.iter()
+            .any(|ev| ev.status.as_deref() == Some("awaiting_approval")
+                && ev
+                    .message
+                    .as_deref()
+                    .is_some_and(|m| m.contains("Build it (2 steps)"))),
+        "the plan-ready event"
+    );
+    let d = s.get(&t.id).await.unwrap();
+    assert_eq!(
+        d.steps.iter().map(|s| s.title.as_str()).collect::<Vec<_>>(),
+        ["first", "second"]
+    );
+    let planner = &d.attempts[0];
+    assert!(
+        planner.role == openchef_core::AttemptRole::Plan
+            && planner.step_index == 0
+            && planner.status == openchef_core::AttemptStatus::Succeeded,
+        "{planner:?}"
+    );
+    let first_turn = e.claude.turns().first().cloned().unwrap_or_default();
+    assert!(first_turn.contains("You are the planner") && first_turn.contains("build it"));
+
+    e.claude.push([
+        Turn::editing("one", write_file),
+        Turn::editing("two", write_file),
+    ]);
+    let _approved = s.approve(&t.id).await.unwrap();
+    e.wait_status(&t.id, TaskStatus::Done).await;
+    let d = s.get(&t.id).await.unwrap();
+    assert!(
+        d.steps
+            .iter()
+            .all(|st| st.status == openchef_core::StepStatus::Verified),
+        "{d:?}"
+    );
+    assert!(s.approve(&t.id).await.is_err(), "approving twice");
+    stop(&s).await;
+}
+
+/// An invalid plan gets one repair turn quoting its problems; a second invalid answer
+/// parks the task with the raw answer in its log.
+#[tokio::test(flavor = "multi_thread")]
+async fn pipeline_repairs_once_then_needs_attention() {
+    let e = env().await;
+    let s = e.service();
+    e.claude.push([
+        Turn::completed("I think we should start with the parser."),
+        Turn::completed(plan_answer(&[("only", "true")])),
+    ]);
+    let t = s.pipeline(e.run("repairable"), false).await.unwrap();
+    e.wait_status(&t.id, TaskStatus::AwaitingApproval).await;
+    let turns = e.claude.turns();
+    assert!(turns[1].contains("Your plan is not valid"), "{turns:?}");
+    assert!(turns[1].contains("no JSON object"), "{turns:?}");
+
+    e.claude.push([
+        Turn::completed("still prose"),
+        Turn::completed("prose again"),
+    ]);
+    let t = s.pipeline(e.run("hopeless"), false).await.unwrap();
+    let parked = e.wait_status(&t.id, TaskStatus::NeedsAttention).await;
+    assert!(
+        parked
+            .reason
+            .as_deref()
+            .unwrap_or("")
+            .contains("still not valid after a repair turn"),
+        "{parked:?}"
+    );
+    let (past, sub) = s.watch(&t.id, true).await.unwrap();
+    s.unwatch(&sub);
+    assert!(
+        past.iter().any(|ev| ev
+            .message
+            .as_deref()
+            .is_some_and(|m| m.contains("prose again"))),
+        "the raw answer is in the log"
+    );
+    // Retrying a pipeline without a plan plans again.
+    e.claude
+        .push([Turn::completed(plan_answer(&[("only", "true")]))]);
+    let again = s.retry(&t.id).await.unwrap();
+    assert_eq!(again.status, TaskStatus::Planning);
+    e.wait_status(&t.id, TaskStatus::AwaitingApproval).await;
+    stop(&s).await;
+}
+
+/// `plan edit` stores a valid edit and refuses an invalid one; `reject` cancels; `--yes`
+/// runs a valid plan without stopping.
+#[tokio::test(flavor = "multi_thread")]
+#[allow(clippy::many_single_char_names)] // e, s, t, d, p as in the other tests
+async fn plan_edit_reject_and_auto_approve() {
+    use openchef_engine::plan::Plan;
+    let e = env().await;
+    let s = e.service();
+    e.claude
+        .push([Turn::completed(plan_answer(&[("a", "true")]))]);
+    let t = s.pipeline(e.run("edit me"), false).await.unwrap();
+    e.wait_status(&t.id, TaskStatus::AwaitingApproval).await;
+    let d = s.get(&t.id).await.unwrap();
+    let mut p = Plan::from_steps("Edited", &d.steps);
+    p.steps[0].title = "renamed".into();
+    p.steps.push(p.steps[0].clone());
+    let steps = s.edit_plan(&t.id, &p).await.unwrap();
+    assert_eq!(steps.len(), 2);
+    assert_eq!(s.get(&t.id).await.unwrap().steps[0].title, "renamed");
+    p.steps[0].files = vec!["../escape".into()];
+    let err = s.edit_plan(&t.id, &p).await.unwrap_err();
+    assert!(err.to_string().contains("not valid"), "{err}");
+    let rejected = s.reject(&t.id, Some("too big")).await.unwrap();
+    assert_eq!(rejected.status, TaskStatus::Cancelled);
+    assert!(
+        s.edit_plan(&t.id, &p).await.is_err(),
+        "editing a cancelled task"
+    );
+
+    e.claude.push([
+        Turn::completed(plan_answer(&[("auto", "true")])),
+        Turn::editing("done", write_file),
+    ]);
+    let t = s.pipeline(e.run("auto"), true).await.unwrap();
+    e.wait_status(&t.id, TaskStatus::Done).await;
+    stop(&s).await;
+}
+
+/// A daemon stopped while planning: the next start ends the left planning attempt and
+/// plans again in a new conversation (D-037).
+#[tokio::test(flavor = "multi_thread")]
+async fn planning_restarts_after_a_daemon_restart() {
+    let e = env().await;
+    let first = e.service();
+    e.claude.push([Turn {
+        hang: true,
+        ..Turn::default()
+    }]);
+    let t = first.pipeline(e.run("plan me"), false).await.unwrap();
+    wait_for(async || e.claude.turns().len() == 1).await;
+    stop(&first).await;
+    assert_eq!(
+        e.store.task(&t.id).await.unwrap().status,
+        TaskStatus::Planning
+    );
+    e.claude
+        .push([Turn::completed(plan_answer(&[("one", "true")]))]);
+    let second = e.service();
+    second.start().await.unwrap();
+    e.wait_status(&t.id, TaskStatus::AwaitingApproval).await;
+    let attempts = e.store.attempts(&t.id).await.unwrap();
+    assert_eq!(attempts.len(), 2, "{attempts:?}");
+    assert_eq!(
+        attempts[0].status,
+        openchef_core::AttemptStatus::Interrupted
+    );
+    assert_eq!(attempts[1].status, openchef_core::AttemptStatus::Succeeded);
+    assert!(
+        e.claude.turns()[1].contains("You are the planner"),
+        "a fresh planning turn"
     );
     stop(&second).await;
 }

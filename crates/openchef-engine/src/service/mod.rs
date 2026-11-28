@@ -27,6 +27,7 @@ use tokio_util::task::TaskTracker;
 
 use crate::engine::{Clock, Config, Engine};
 use crate::events::{Event, EventKind, Sink};
+use crate::plan::Plan;
 
 /// Returns a repository's default permission mode (its settings' `defaultMode`).
 pub type DefaultPermissions = Arc<dyn Fn(&Path) -> Result<PermissionMode, String> + Send + Sync>;
@@ -136,6 +137,8 @@ pub struct Detail {
 #[derive(Default)]
 struct State {
     running: HashMap<TaskId, CancellationToken>,
+    /// Pipelines whose plan runs without waiting for approval (`pipeline --yes`).
+    auto_approve: std::collections::HashSet<TaskId>,
     /// Wake-ups of `waiting_quota` tasks: a generation, so a replaced timer is ignored.
     timers: HashMap<TaskId, (u64, CancellationToken)>,
     next_timer: u64,
@@ -249,12 +252,11 @@ impl Service {
             .await?;
         for t in active {
             match t.status {
-                TaskStatus::Running => self.inner.drive(&t.id),
+                TaskStatus::Planning | TaskStatus::Running => self.inner.drive(&t.id),
                 TaskStatus::WaitingQuota => self.inner.schedule(&t.id, t.resume_at),
-                // Planning, awaiting approval, reviewing and needs_attention wait for the
-                // user or a later milestone.
-                TaskStatus::Planning
-                | TaskStatus::AwaitingApproval
+                // Awaiting approval, reviewing and needs_attention wait for the user or a
+                // later milestone.
+                TaskStatus::AwaitingApproval
                 | TaskStatus::Reviewing
                 | TaskStatus::NeedsAttention
                 | TaskStatus::Done
@@ -296,6 +298,21 @@ impl Service {
     /// [`Error::Invalid`] for an empty prompt, a directory outside a repository or a
     /// refused permission mode.
     pub async fn run(&self, req: RunRequest) -> Result<Task, Error> {
+        self.create(req, Kind::Run, false).await
+    }
+
+    /// Creates a pipeline task and starts its planner (§7.5). With `approve`, a valid
+    /// plan runs at once instead of waiting in `awaiting_approval` (kept in memory: a
+    /// daemon restart leaves the plan for the user).
+    ///
+    /// # Errors
+    ///
+    /// As [`Service::run`].
+    pub async fn pipeline(&self, req: RunRequest, approve: bool) -> Result<Task, Error> {
+        self.create(req, Kind::Pipeline, approve).await
+    }
+
+    async fn create(&self, req: RunRequest, kind: Kind, approve: bool) -> Result<Task, Error> {
         let prompt = req.prompt.trim().to_owned();
         if prompt.is_empty() {
             return Err(Error::Invalid("empty prompt".into()));
@@ -317,8 +334,8 @@ impl Service {
         let now = self.inner.now();
         let task = Task {
             id: id.clone(),
-            kind: Kind::Run,
-            status: TaskStatus::Running,
+            kind,
+            status: kind.initial_status(),
             prompt: prompt.clone(),
             repo_root: repo.root.clone(),
             base_commit: None,
@@ -354,10 +371,15 @@ impl Service {
             verified_commit: None,
             updated_at: now,
         };
+        let steps = match kind {
+            Kind::Run => vec![step],
+            // A pipeline's steps come from its plan; a --verify becomes the planner's hint.
+            Kind::Pipeline => Vec::new(),
+        };
         let (task, _) = self
             .inner
             .store
-            .create_task(task, vec![step])
+            .create_task(task, steps)
             .await
             .map_err(|e| {
                 if e.is_invalid() {
@@ -366,6 +388,9 @@ impl Service {
                     Error::Store(e)
                 }
             })?;
+        if approve {
+            let _new = self.inner.state().auto_approve.insert(id.clone());
+        }
         self.inner.status_event(&id, task.status, "created");
         self.inner.drive(&id);
         Ok(task)
@@ -459,18 +484,90 @@ impl Service {
                 t.status
             )));
         }
+        let to = self.inner.resume_status(&t).await?;
         let got = self
             .inner
             .store
-            .transition_task(id, t.status, TaskStatus::Running, TaskChange::default())
+            .transition_task(id, t.status, to, TaskChange::default())
             .await?;
         if let Some((_, timer)) = self.inner.state().timers.remove(id) {
             timer.cancel();
         }
-        self.inner
-            .status_event(id, TaskStatus::Running, "retried by the user");
+        self.inner.status_event(id, to, "retried by the user");
         self.inner.drive(id);
         Ok(got)
+    }
+
+    /// Approves a pipeline's plan: its steps run (§7.5 phase 3).
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Invalid`] unless the task awaits approval.
+    pub async fn approve(&self, id: &TaskId) -> Result<Task, Error> {
+        self.inner.approve(id, "plan approved").await
+    }
+
+    /// Rejects a pipeline's plan, cancelling the task.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Invalid`] unless the task awaits approval.
+    pub async fn reject(&self, id: &TaskId, reason: Option<&str>) -> Result<Task, Error> {
+        let t = self.inner.awaiting(id).await?;
+        let why = reason.map_or_else(
+            || "plan rejected".to_owned(),
+            |r| format!("plan rejected: {r}"),
+        );
+        let got = self
+            .inner
+            .store
+            .transition_task(
+                id,
+                t.status,
+                TaskStatus::Cancelled,
+                TaskChange {
+                    reason: Some(why.clone()),
+                    ..TaskChange::default()
+                },
+            )
+            .await?;
+        let _was_auto = self.inner.state().auto_approve.remove(id);
+        self.inner.status_event(id, TaskStatus::Cancelled, &why);
+        self.inner.events.close_task(id);
+        Ok(got)
+    }
+
+    /// Replaces a pipeline's plan before approval (`openchef plan edit`), under the same
+    /// validation as the planner's.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Invalid`] for an invalid plan or a task that does not await approval.
+    pub async fn edit_plan(&self, id: &TaskId, p: &Plan) -> Result<Vec<Step>, Error> {
+        let _t = self.inner.awaiting(id).await?;
+        let problems = crate::plan::problems(p);
+        if !problems.is_empty() {
+            return Err(Error::Invalid(format!(
+                "the plan is not valid: {}",
+                problems.join("; ")
+            )));
+        }
+        let steps = self
+            .inner
+            .store
+            .set_plan(id, p.steps(id, self.inner.now()))
+            .await
+            .map_err(|e| {
+                if e.is_invalid() {
+                    Error::Invalid(e.to_string())
+                } else {
+                    Error::Store(e)
+                }
+            })?;
+        let mut ev = Event::new(id, self.inner.now(), EventKind::Notice);
+        ev.message = Some(format!("plan edited: {} steps", steps.len()));
+        self.inner.events.publish(ev);
+        Ok(steps)
     }
 
     /// The task's past events (with `replay`) and a subscription to new ones. Call
@@ -539,6 +636,39 @@ impl Inner {
         }
     }
 
+    /// The task, if it awaits approval.
+    async fn awaiting(&self, id: &TaskId) -> Result<Task, Error> {
+        let t = self.store.task(id).await?;
+        if t.status != TaskStatus::AwaitingApproval {
+            return Err(Error::Invalid(format!(
+                "task {id} is {}; only a plan awaiting approval can be approved, edited or rejected",
+                t.status
+            )));
+        }
+        Ok(t)
+    }
+
+    async fn approve(self: &Arc<Self>, id: &TaskId, why: &str) -> Result<Task, Error> {
+        let t = self.awaiting(id).await?;
+        let got = self
+            .store
+            .transition_task(id, t.status, TaskStatus::Running, TaskChange::default())
+            .await?;
+        let _was_auto = self.state().auto_approve.remove(id);
+        self.status_event(id, TaskStatus::Running, why);
+        self.drive(id);
+        Ok(got)
+    }
+
+    /// Where a stopped task resumes: planning for a pipeline without a plan yet.
+    async fn resume_status(&self, t: &Task) -> Result<TaskStatus, Error> {
+        if t.kind == Kind::Pipeline && self.store.steps(&t.id).await?.is_empty() {
+            Ok(TaskStatus::Planning)
+        } else {
+            Ok(TaskStatus::Running)
+        }
+    }
+
     /// Starts an engine run for a task unless one is in progress.
     fn drive(self: &Arc<Self>, id: &TaskId) {
         let token = {
@@ -575,6 +705,14 @@ impl Inner {
                 inner.schedule(&id, t.resume_at);
             } else if t.status.is_terminal() {
                 inner.events.close_task(&id);
+            } else if t.status == TaskStatus::AwaitingApproval
+                && inner.state().auto_approve.remove(&id)
+            {
+                if let Err(e) = inner.approve(&id, "approved by --yes").await {
+                    let mut ev = Event::new(&id, inner.now(), EventKind::Notice);
+                    ev.message = Some(format!("automatic approval failed: {e}"));
+                    inner.events.publish(ev);
+                }
             } else if t.status == TaskStatus::Running && ok && !stopped {
                 // A retry landed while this run was still cleaning up: its drive was a
                 // no-op, so run again. A failed run is not restarted here, or a
@@ -615,18 +753,20 @@ impl Inner {
                 }
                 drop(st.timers.remove(&id));
             }
+            let to = match inner.store.task(&id).await {
+                Ok(t) => match inner.resume_status(&t).await {
+                    Ok(to) => to,
+                    Err(_) => TaskStatus::Running,
+                },
+                Err(_) => TaskStatus::Running,
+            };
             match inner
                 .store
-                .transition_task(
-                    &id,
-                    TaskStatus::WaitingQuota,
-                    TaskStatus::Running,
-                    TaskChange::default(),
-                )
+                .transition_task(&id, TaskStatus::WaitingQuota, to, TaskChange::default())
                 .await
             {
                 Ok(_) => {
-                    inner.status_event(&id, TaskStatus::Running, "quota reset; resuming");
+                    inner.status_event(&id, to, "quota reset; resuming");
                     inner.drive(&id);
                 }
                 Err(e) if e.is_conflict() => {}

@@ -175,23 +175,24 @@ async fn harness() -> Harness {
         ],
         cooldown: None,
     });
-    let spec_for: openchef_engine::SpecFor = Arc::new(|_: &Task, _: &Agent| {
-        Ok(SessionSpec {
-            dir: PathBuf::new(),
-            model: None,
-            effort: None,
-            mode: PermissionMode::AcceptEdits,
-            deny_rules: Vec::new(),
-            ask_rules: Vec::new(),
-            web_access: false,
-            env: Vec::new(),
-            approver: Arc::new(AllowAll),
-            ask_user: None,
-            log_path: None,
-            on_spawn: None,
-            confine: None,
-        })
-    });
+    let spec_for: openchef_engine::SpecFor =
+        Arc::new(|_: &Task, _: &Agent, _: openchef_core::AttemptRole| {
+            Ok(SessionSpec {
+                dir: PathBuf::new(),
+                model: None,
+                effort: None,
+                mode: PermissionMode::AcceptEdits,
+                deny_rules: Vec::new(),
+                ask_rules: Vec::new(),
+                web_access: false,
+                env: Vec::new(),
+                approver: Arc::new(AllowAll),
+                ask_user: None,
+                log_path: None,
+                on_spawn: None,
+                confine: None,
+            })
+        });
     let mut cfg = Config::new(
         store.clone(),
         runtimes,
@@ -1162,6 +1163,7 @@ async fn recovery_of_session_without_native_id() {
         .start_attempt(openchef_store::NewAttempt {
             task_id: id.clone(),
             step_index: 1,
+            role: openchef_core::AttemptRole::Implement,
             agent: "opus".into(),
             runtime: "claude".into(),
             model: String::new(),
