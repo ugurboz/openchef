@@ -322,7 +322,10 @@ async fn attempt_roles_migration_keeps_history() {
     drop(conn);
 
     let store = Store::open(&path).await.unwrap();
-    assert_eq!(store.schema_version().await.unwrap(), 3);
+    assert!(
+        store.schema_version().await.unwrap() >= 3,
+        "0003 and later applied"
+    );
     let id = "aaaaaaaaaa".parse().unwrap();
     let attempts = store.attempts(&id).await.unwrap();
     assert_eq!(attempts.len(), 1);

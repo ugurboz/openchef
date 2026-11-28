@@ -205,4 +205,60 @@ impl Worktree {
             .filter(|p| p != CONTROL_DIR && !p.starts_with(&control))
             .collect())
     }
+
+    /// The step's uncommitted change for a reviewer: `git diff HEAD` of tracked files and
+    /// the contents of untracked ones, cut at `limit` bytes. Read-only: the index is not
+    /// touched.
+    ///
+    /// # Errors
+    ///
+    /// When git fails.
+    pub async fn diff(&self, limit: usize) -> Result<String, Error> {
+        let tracked = self
+            .git
+            .run(
+                &self.path,
+                None,
+                &["diff", "--no-color", "--no-ext-diff", "HEAD", "--"],
+            )
+            .await?;
+        let mut out = String::from_utf8_lossy(&tracked).into_owned();
+        let untracked = self
+            .git
+            .run(
+                &self.path,
+                None,
+                &["ls-files", "--others", "--exclude-standard", "-z"],
+            )
+            .await?;
+        let control = format!("{CONTROL_DIR}/");
+        for raw in untracked.split(|b| *b == 0).filter(|e| !e.is_empty()) {
+            if out.len() >= limit {
+                break;
+            }
+            let rel = String::from_utf8_lossy(raw).into_owned();
+            if rel == CONTROL_DIR || rel.starts_with(&control) {
+                continue;
+            }
+            let body = std::fs::read(self.path.join(&rel)).unwrap_or_default();
+            let text = if body.contains(&0) {
+                "(binary file)".to_owned()
+            } else {
+                String::from_utf8_lossy(&body).into_owned()
+            };
+            out.push_str("new file: ");
+            out.push_str(&rel);
+            out.push('\n');
+            out.push_str(&text);
+            out.push('\n');
+        }
+        if out.len() > limit {
+            let mut cut = limit;
+            while !out.is_char_boundary(cut) {
+                cut -= 1;
+            }
+            out.truncate(cut);
+        }
+        Ok(out)
+    }
 }

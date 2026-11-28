@@ -49,6 +49,8 @@ pub(crate) struct QuotaRouter {
     /// Weighted shares, kept for the daemon's life. A small leaf value, never held
     /// across `.await` (D-030).
     counters: Mutex<Counters>,
+    /// The review phase's weighted shares, kept apart from the implement phase's.
+    review_counters: Mutex<Counters>,
 }
 
 impl std::fmt::Debug for QuotaRouter {
@@ -72,6 +74,7 @@ impl QuotaRouter {
             cfg: cfg.clone(),
             quota,
             counters: Mutex::new(Counters::new()),
+            review_counters: Mutex::new(Counters::new()),
         }
     }
 
@@ -219,6 +222,48 @@ impl Router for QuotaRouter {
 
     fn agent_named(&self, name: &str) -> Option<Agent> {
         self.agents.iter().find(|a| a.name == name).cloned()
+    }
+
+    fn route_reviewer(
+        &self,
+        task: &Task,
+        step: &Step,
+        avoid_runtime: &str,
+    ) -> Result<Agent, NoAgent> {
+        let importance = step.importance.at_least(task.importance);
+        let now = self.quota.now();
+        let view = self.quota.view();
+        let mut cands = Vec::new();
+        let mut refused = Vec::new();
+        for a in self.agents.iter().filter(|a| a.runtime != avoid_runtime) {
+            let (c, r) = self.candidate(a, &view, now, &[]);
+            cands.push(c);
+            refused.extend(r);
+        }
+        let strategy = self
+            .cfg
+            .routing
+            .get(&Phase::Review)
+            .map_or(Strategy::Auto, |p| p.strategy);
+        let req = Request {
+            strategy,
+            importance,
+            allow_downgrade: false,
+        };
+        let decided = {
+            let mut counters = self
+                .review_counters
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            choose(req, &cands, &mut counters)
+        };
+        let pick = decided
+            .map_err(|e| no_agent(format!("no reviewer: {e}"), &refused))?
+            .agent;
+        let Some(a) = self.agents.iter().find(|a| a.name == pick) else {
+            return Err(no_agent(format!("agent {pick:?} vanished"), &refused));
+        };
+        Ok(self.effort(a, importance, &view, now))
     }
 }
 
@@ -473,5 +518,44 @@ mod tests {
         assert_eq!(a.effort, Some(Effort::Low), "plus, yellow, high importance");
         let a = route(&r, Importance::High, Some("opus"), &[]).unwrap_or_else(|e| panic!("{e}"));
         assert_eq!(a.effort, Some(Effort::High), "max, green, high importance");
+    }
+
+    #[test]
+    fn reviewers_come_from_another_provider() {
+        let q = Arc::new(FakeQuota::default());
+        q.set("claude-max", 0.1, H4);
+        q.set("chatgpt", 0.9, H4);
+        let r = QuotaRouter::new(
+            &config(Strategy::Auto),
+            Arc::clone(&q) as Arc<dyn QuotaSource>,
+        );
+        let mut task = crate::policy::tests::test_task(
+            std::path::Path::new("/w"),
+            openchef_core::PermissionMode::Manual,
+        );
+        task.agent_pin = Some("opus".into());
+        let step = Step {
+            task_id: task.id.clone(),
+            index: 1,
+            title: "s".into(),
+            prompt: "p".into(),
+            files: Vec::new(),
+            verify: None,
+            importance: Importance::Normal,
+            status: StepStatus::Running,
+            retries: 0,
+            verified_commit: None,
+            updated_at: NOW,
+        };
+        // gpt has less headroom, but it is the only other provider; the pin is ignored.
+        let a = r
+            .route_reviewer(&task, &step, "claude")
+            .unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(a.name, "gpt");
+        q.set("chatgpt", 1.0, H4);
+        assert!(
+            r.route_reviewer(&task, &step, "claude").is_err(),
+            "never the same provider"
+        );
     }
 }

@@ -41,6 +41,10 @@ pub(crate) fn embedded() -> Vec<Migration> {
             "0003_attempt_roles.sql",
             include_str!("../migrations/0003_attempt_roles.sql"),
         ),
+        Migration::new(
+            "0004_findings.sql",
+            include_str!("../migrations/0004_findings.sql"),
+        ),
     ]
 }
 

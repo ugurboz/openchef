@@ -23,7 +23,7 @@ use crate::turn::TurnEnd;
 use crate::verify::{self, Outcome};
 
 /// What the step loop does after an attempt.
-enum AttemptEnd {
+pub(crate) enum AttemptEnd {
     /// Next step.
     Verified,
     /// Route to another pool and try again.
@@ -50,7 +50,7 @@ struct CarryOver {
 }
 
 impl Run<'_> {
-    fn total(&self) -> usize {
+    pub(crate) fn total(&self) -> usize {
         self.steps.len()
     }
 
@@ -144,12 +144,30 @@ impl Run<'_> {
         }
     }
 
-    /// The attempt at a step still recorded as running (left by a daemon that stopped).
+    /// The implementer's attempt at a step still recorded as running (left by a daemon
+    /// that stopped). A review left running is ended: it runs again after the next
+    /// verification (D-038).
     async fn running_attempt(&self, step: u32) -> Result<Option<Attempt>, Error> {
         let attempts = self.store().attempts(&self.task.id).await?;
-        Ok(attempts
+        let mut implementer = None;
+        for a in attempts
             .into_iter()
-            .find(|a| a.step_index == step && a.status == AttemptStatus::Running))
+            .filter(|a| a.step_index == step && a.status == AttemptStatus::Running)
+        {
+            if a.role == openchef_core::AttemptRole::Implement {
+                implementer = Some(a);
+            } else {
+                drop(self.settle(&a).await?);
+                self.store()
+                    .end_attempt(
+                        a.id,
+                        AttemptStatus::Interrupted,
+                        "daemon restart during review",
+                    )
+                    .await?;
+            }
+        }
+        Ok(implementer)
     }
 
     /// Stops whatever an earlier daemon left of an attempt: kills a process that is
@@ -421,8 +439,10 @@ impl Run<'_> {
                 TurnEnd::Completed(_) => {
                     let outcome = self.verify(i).await?;
                     match outcome {
-                        None => return self.commit(i, a, agent).await,
-                        Some(o) if o.passed => return self.commit(i, a, agent).await,
+                        None => return self.reviewed_commit(i, a, agent, live, retries).await,
+                        Some(o) if o.passed => {
+                            return self.reviewed_commit(i, a, agent, live, retries).await;
+                        }
                         Some(o) => {
                             if !self
                                 .retry(i, a, retries, &format!("verification {}", o.summary()))
@@ -535,7 +555,7 @@ impl Run<'_> {
     }
 
     /// Spends one retry of the step's budget; `false` when none is left.
-    async fn retry(
+    pub(crate) async fn retry(
         &mut self,
         i: usize,
         a: &Attempt,
@@ -599,7 +619,7 @@ impl Run<'_> {
     }
 
     /// Runs the step's verification command; `None` when the step has none.
-    async fn verify(&self, i: usize) -> Result<Option<Outcome>, Error> {
+    pub(crate) async fn verify(&self, i: usize) -> Result<Option<Outcome>, Error> {
         let s = &self.steps[i];
         let Some(command) = s.verify.clone() else {
             return Ok(None);
@@ -642,7 +662,12 @@ impl Run<'_> {
 
     /// Records a verified step: git commit, then step verified, then attempt
     /// succeeded. A replay after a crash finds the existing commit by its trailers.
-    async fn commit(&mut self, i: usize, a: &Attempt, agent: &Agent) -> Result<AttemptEnd, Error> {
+    pub(crate) async fn commit(
+        &mut self,
+        i: usize,
+        a: &Attempt,
+        agent: &Agent,
+    ) -> Result<AttemptEnd, Error> {
         let index = self.steps[i].index;
         self.ensure_active().await?;
         let step = StepCommit {
@@ -716,7 +741,7 @@ impl Run<'_> {
     }
 
     /// Fails the attempt and the step and parks the task for a human.
-    async fn give_up(
+    pub(crate) async fn give_up(
         &mut self,
         i: usize,
         a: &Attempt,

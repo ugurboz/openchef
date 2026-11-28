@@ -43,6 +43,24 @@ pub trait Router: Send + Sync {
     fn agent_named(&self, _name: &str) -> Option<Agent> {
         None
     }
+
+    /// A reviewer for a step: an agent of another provider than `avoid_runtime` (the
+    /// implementer's), never the same one (§7.5). A task's pin does not apply.
+    ///
+    /// # Errors
+    ///
+    /// [`NoAgent`] when no other provider can review now.
+    fn route_reviewer(
+        &self,
+        _task: &Task,
+        _step: &Step,
+        avoid_runtime: &str,
+    ) -> Result<Agent, NoAgent> {
+        Err(NoAgent {
+            resume_at: None,
+            reason: format!("no reviewer other than {avoid_runtime} is configured"),
+        })
+    }
 }
 
 /// Reports until when a pool is unusable (quota reset); `None` means usable.
@@ -92,5 +110,24 @@ impl Router for Ordered {
 
     fn agent_named(&self, name: &str) -> Option<Agent> {
         self.agents.iter().find(|a| a.name == name).cloned()
+    }
+
+    fn route_reviewer(
+        &self,
+        _task: &Task,
+        _step: &Step,
+        avoid_runtime: &str,
+    ) -> Result<Agent, NoAgent> {
+        self.agents
+            .iter()
+            .find(|a| {
+                a.runtime != avoid_runtime
+                    && self.cooldown.as_ref().is_none_or(|c| c(&a.pool).is_none())
+            })
+            .cloned()
+            .ok_or_else(|| NoAgent {
+                resume_at: None,
+                reason: format!("no agent of another provider than {avoid_runtime} is available"),
+            })
     }
 }

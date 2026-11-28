@@ -822,7 +822,9 @@ impl openchef_engine::Sink for QuotaTap {
             | EventKind::StepFinished
             | EventKind::Notice
             | EventKind::ApprovalRequested
-            | EventKind::ApprovalDecided => {}
+            | EventKind::ApprovalDecided
+            | EventKind::ReviewStarted
+            | EventKind::ReviewFinished => {}
         }
     }
 }

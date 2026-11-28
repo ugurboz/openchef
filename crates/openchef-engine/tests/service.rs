@@ -926,3 +926,155 @@ async fn planning_restarts_after_a_daemon_restart() {
     );
     stop(&second).await;
 }
+
+/// A reviewer's answer with findings `(id, severity, file)`.
+fn review_answer(findings: &[(&str, &str, Option<&str>)]) -> String {
+    let f: Vec<serde_json::Value> = findings
+        .iter()
+        .map(|(id, sev, file)| {
+            serde_json::json!({"id": id, "severity": sev, "file": file, "line": null, "contract": null,
+                "claim": format!("{id} is wrong"), "evidence": "see the diff", "fix": "change it"})
+        })
+        .collect();
+    serde_json::json!({ "findings": f }).to_string()
+}
+
+/// A planned one-step pipeline of `importance`, approved and waiting for its turns.
+async fn approved_pipeline(e: &Env, s: &Service, importance: &str) -> TaskId {
+    let plan = serde_json::json!({"title": "T", "steps": [{"title": "only", "prompt": "write out.txt",
+        "files": ["out.txt"], "verify": "true", "size": "small", "importance": importance, "reason": "r"}]});
+    e.claude.push([Turn::completed(plan.to_string())]);
+    let mut req = e.run("reviewed");
+    // The task's importance is the floor of its steps'.
+    req.importance = Some(importance.parse().unwrap());
+    let t = s.pipeline(req, false).await.unwrap();
+    e.wait_status(&t.id, TaskStatus::AwaitingApproval).await;
+    t.id
+}
+
+/// R5.2: a blocker from the other provider's reviewer gets one fix turn in the
+/// implementer's session, re-verification, then the commit; the finding is fixed and the
+/// reviewer's attempt has the `review` role.
+#[tokio::test(flavor = "multi_thread")]
+async fn review_blocker_is_fixed_before_commit() {
+    let e = env().await;
+    let s = e.service();
+    let id = approved_pipeline(&e, &s, "normal").await;
+    e.claude.push([
+        Turn::editing("first try", write_file),
+        Turn::completed("fixed it\nFIXED F1"),
+    ]);
+    e.codex.push([Turn::completed(review_answer(&[
+        ("F1", "blocker", Some("out.txt")),
+        ("F2", "nit", None),
+    ]))]);
+    let _approved = s.approve(&id).await.unwrap();
+    e.wait_status(&id, TaskStatus::Done).await;
+    let turns = e.claude.turns();
+    assert!(
+        turns
+            .last()
+            .unwrap()
+            .contains("A reviewer (gpt, another provider)"),
+        "{turns:?}"
+    );
+    let review_turn = e.codex.turns()[0].clone();
+    assert!(
+        review_turn.contains("You are the reviewer") && review_turn.contains("out.txt"),
+        "{review_turn}"
+    );
+    let findings = e.store.findings(&id).await.unwrap();
+    let status: Vec<(&str, &str)> = findings
+        .iter()
+        .map(|f| (f.finding.as_str(), f.status.as_str()))
+        .collect();
+    assert_eq!(status, [("F1", "fixed"), ("F2", "nit")]);
+    let reviewer = e
+        .store
+        .attempts(&id)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|a| a.role == openchef_core::AttemptRole::Review)
+        .unwrap();
+    assert_eq!(
+        (reviewer.agent.as_str(), reviewer.status),
+        ("gpt", openchef_core::AttemptStatus::Succeeded)
+    );
+    stop(&s).await;
+}
+
+/// A rebuttal marks the finding disputed; unlocated blockers and nits cost no turn.
+#[tokio::test(flavor = "multi_thread")]
+async fn review_rebuttals_and_unlocated_findings() {
+    let e = env().await;
+    let s = e.service();
+    let id = approved_pipeline(&e, &s, "normal").await;
+    e.claude.push([
+        Turn::editing("done", write_file),
+        Turn::completed("REBUT F1: the test covers it"),
+    ]);
+    e.codex.push([Turn::completed(review_answer(&[(
+        "F1",
+        "major",
+        Some("out.txt"),
+    )]))]);
+    let _a = s.approve(&id).await.unwrap();
+    e.wait_status(&id, TaskStatus::Done).await;
+    let f = e.store.findings(&id).await.unwrap();
+    assert_eq!(
+        (f[0].status.as_str(), f[0].note.as_deref()),
+        ("disputed", Some("the test covers it"))
+    );
+
+    let id = approved_pipeline(&e, &s, "normal").await;
+    let before = e.claude.turns().len();
+    e.claude.push([Turn::editing("done", write_file)]);
+    e.codex
+        .push([Turn::completed(review_answer(&[("F1", "blocker", None)]))]);
+    let _a = s.approve(&id).await.unwrap();
+    e.wait_status(&id, TaskStatus::Done).await;
+    assert_eq!(
+        e.claude.turns().len(),
+        before + 1,
+        "an unlocated blocker is a nit: no fix turn"
+    );
+    assert_eq!(e.store.findings(&id).await.unwrap()[0].status, "nit");
+    stop(&s).await;
+}
+
+/// Low importance skips review; a reviewer that never answers validly is skipped
+/// without blocking the step.
+#[tokio::test(flavor = "multi_thread")]
+async fn review_depth_and_invalid_reviews() {
+    let e = env().await;
+    let s = e.service();
+    let id = approved_pipeline(&e, &s, "low").await;
+    e.claude.push([Turn::editing("done", write_file)]);
+    let _a = s.approve(&id).await.unwrap();
+    e.wait_status(&id, TaskStatus::Done).await;
+    assert!(e.codex.turns().is_empty(), "low importance has no review");
+
+    let id = approved_pipeline(&e, &s, "normal").await;
+    e.claude.push([Turn::editing("done", write_file)]);
+    e.codex.push([
+        Turn::completed("looks fine to me"),
+        Turn::completed("really fine"),
+    ]);
+    let _a = s.approve(&id).await.unwrap();
+    e.wait_status(&id, TaskStatus::Done).await;
+    let codex = e.codex.turns();
+    assert!(
+        codex.len() == 2 && codex[1].contains("Your findings are not valid"),
+        "{codex:?}"
+    );
+    let (past, sub) = s.watch(&id, true).await.unwrap();
+    s.unwatch(&sub);
+    assert!(
+        past.iter()
+            .any(|ev| ev.kind == EventKind::ReviewFinished
+                && ev.status.as_deref() == Some("skipped")),
+        "the skipped review is recorded"
+    );
+    stop(&s).await;
+}
