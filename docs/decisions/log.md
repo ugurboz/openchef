@@ -882,3 +882,43 @@ where they name Go packages or types, read the matching crate (`internal/<x>` �
   `status` list the council's open findings next to the plan. A daemon restart during the
   council restarts planning (D-037). Quota admission of these turns and the task-wide
   budget come with R5.4. `--importance` on the CLI is still missing (#52).
+
+## D-040 — Circuit breakers: pipeline-only stagnation, one escalation, a persisted task budget
+*2026-11-28 · R5.4*
+
+- **Context:** §7.5's breakers (stagnation, quota, budget) and its quota-lowered depth.
+  Go stopped before M5; nothing to port. The breakers must bound the debate of
+  D-038/D-039 even when agents loop, quota runs out or the daemon restarts.
+- **Options (stagnation):** (a) on every task's §7.2 loop, or (b) on pipeline steps
+  only; signals kept (c) in the store or (d) in memory per step run. **(escalation):**
+  (e) a fresh attempt from the last verified commit, or (f) one on the worktree as left.
+  **(budget):** (g) counted in memory per run, (h) derived from stored turns, or (i) a
+  counter on the task spent atomically. **(pressure):** (j) any configured pool, or (k)
+  the pools the debate actually spends.
+- **Challenge:** a `run` task has no debate and §7.2 already bounds it; changing its
+  retries would change the ported Go behaviour and surprise a pinned user, so (b).
+  Signals in memory (d) cost nothing and a restart only gives one extra try; storing
+  hashes (c) would need a table for a heuristic. A fresh start (e) throws away work the
+  escalation agent could finish in one turn; (f) keeps it and the verification still
+  judges. Stored turns (h) cannot tell a fix turn from a §7.2 retry; an in-memory count
+  (g) refills on every restart; (i) is one column and one conditional update. Pressure
+  on an unused pool (j) would lower depth for no saving; (k) checks the payers.
+- **Decision:** (b), (d), (f), (i), (k). Stagnation = the same verification failure
+  fingerprint (exit status + output with ANSI, digit runs, worktree path and whitespace
+  normalized) twice in a row, a worktree state (git tree, `.openchef` excluded) equal to
+  one before the previous, or a blocker/major reopened with the id and file of a finding
+  settled `fixed`. One escalation turn: a new `implement` attempt for a frontier agent
+  (routed as `critical`) on another pool, verification once without retries, commit on
+  a pass with no further review; otherwise, and when no escalation is possible (pin, no
+  agent, budget), `needs_attention`. Independent agents all refused by admission or a
+  cooldown → "skipped for quota" (`NoAgent::quota`); a fix turn out of quota fails over
+  like an implement turn, and review rounds continue from the step's last recorded round
+  so the limit holds across attempts. `max_turns_per_task` (default 2 × steps + 4)
+  counts critic, revision, review, arbiter, fix and escalation turns, repairs included,
+  in `tasks.debate_turns` (migration 0006). `[debate.<importance>]` overrides the
+  depth table within caps; an `auto` pool in `yellow`/`red` (planner's or implementer's
+  before the debate, each judge's when routed) lowers depth one level, once.
+- **Consequences:** a stagnating step costs at most one extra turn plus one escalation
+  before a person sees it; the debate of a task never exceeds its budget across
+  restarts; `openchef status` shows the turns spent. The budget is never refilled, not
+  even by `retry`: a person who wants more debate raises the limit.
