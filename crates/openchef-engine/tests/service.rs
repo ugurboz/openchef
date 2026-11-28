@@ -739,6 +739,8 @@ fn plan_answer(steps: &[(&str, &str)]) -> String {
     let steps: Vec<serde_json::Value> = steps
         .iter()
         .map(|(title, verify)| {
+            // `true` is not a command on Windows; no verification keeps the test portable.
+            let verify = (*verify != "true").then_some(*verify);
             serde_json::json!({"title": title, "prompt": format!("Do: {title}"), "files": ["out.txt"],
                 "verify": verify, "size": "small", "importance": "normal", "reason": "needed"})
         })
