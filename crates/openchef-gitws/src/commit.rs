@@ -15,7 +15,7 @@ pub const TRAILER_AGENT: &str = "OpenChef-Agent";
 pub const TRAILER_POOL: &str = "OpenChef-Pool";
 
 /// Used only when the user has no git identity configured.
-const FALLBACK_IDENTITY: [&str; 4] = [
+pub(crate) const FALLBACK_IDENTITY: [&str; 4] = [
     "-c",
     "user.name=OpenChef",
     "-c",
@@ -108,7 +108,7 @@ impl Worktree {
         self.head().await
     }
 
-    async fn has_identity(&self) -> bool {
+    pub(crate) async fn has_identity(&self) -> bool {
         let name = self.git.line(&self.path, &["config", "user.name"]).await;
         let email = self.git.line(&self.path, &["config", "user.email"]).await;
         matches!((name, email), (Ok(n), Ok(e)) if !n.is_empty() && !e.is_empty())

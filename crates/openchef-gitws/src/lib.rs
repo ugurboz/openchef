@@ -7,6 +7,7 @@
 
 mod commit;
 mod git;
+mod integrate;
 #[cfg(test)]
 mod tests;
 mod worktree;
@@ -15,6 +16,7 @@ use std::path::PathBuf;
 
 pub use commit::{StepCommit, TRAILER_AGENT, TRAILER_POOL, TRAILER_STEP, TRAILER_TASK};
 pub use git::Repo;
+pub use integrate::{Merged, Rebased};
 pub use worktree::Worktree;
 
 /// The per-worktree directory OpenChef owns (patches, scratch files). Its contents

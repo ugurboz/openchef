@@ -11,7 +11,7 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
 use crate::git::{Git, git_env};
-use crate::{CONTROL_DIR, Error, Repo, StepCommit, Worktree};
+use crate::{CONTROL_DIR, Error, Merged, Rebased, Repo, StepCommit, Worktree};
 
 struct Fixture {
     repo: Repo,
@@ -451,4 +451,141 @@ async fn diff_shows_tracked_and_untracked_changes() {
         "index untouched"
     );
     assert!(wt.diff(5).await.unwrap().len() <= 5);
+}
+
+/// A worker worktree on `openchef/<task>-step-<n>` branched from the integration tip.
+async fn worker(f: &mut Fixture, integration: &Worktree, n: u32) -> Worktree {
+    let tip = integration.head().await.unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir
+        .path()
+        .join("k3m9x2q7ab.steps")
+        .join(format!("step-{n}"));
+    f.dirs.push(dir);
+    f.repo
+        .create_worktree(&path, &format!("openchef/k3m9x2q7ab-step-{n}"), &tip)
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn rebase_and_fast_forward_integrate_steps() {
+    let mut f = new_repo().await;
+    let (main, base) = new_worktree(&mut f).await;
+    let one = worker(&mut f, &main, 1).await;
+    let two = worker(&mut f, &main, 2).await;
+    write(&one.path.join("a.txt"), "a\n");
+    one.commit_step(&base, &step(1, "opus", "p")).await.unwrap();
+    write(&two.path.join("b.txt"), "b\n");
+    two.commit_step(&base, &step(2, "gpt", "q")).await.unwrap();
+
+    let Rebased::Clean(first) = one.rebase_onto(&main.branch).await.unwrap() else {
+        panic!("no conflict expected");
+    };
+    assert_eq!(main.fast_forward(&one.branch).await.unwrap(), first);
+    let Rebased::Clean(second) = two.rebase_onto(&main.branch).await.unwrap() else {
+        panic!("disjoint files do not conflict");
+    };
+    assert_eq!(main.fast_forward(&two.branch).await.unwrap(), second);
+    assert!(main.path.join("a.txt").exists() && main.path.join("b.txt").exists());
+    assert!(
+        main.find_step_commit(&base, "k3m9x2q7ab", 2)
+            .await
+            .unwrap()
+            .is_some(),
+        "the integrated step is found by its trailers"
+    );
+}
+
+#[tokio::test]
+async fn rebase_conflict_is_aborted_and_reported() {
+    let mut f = new_repo().await;
+    let (main, base) = new_worktree(&mut f).await;
+    let one = worker(&mut f, &main, 1).await;
+    let two = worker(&mut f, &main, 2).await;
+    write(&one.path.join("README.md"), "one\n");
+    one.commit_step(&base, &step(1, "opus", "p")).await.unwrap();
+    write(&two.path.join("README.md"), "two\n");
+    let before = two.commit_step(&base, &step(2, "gpt", "q")).await.unwrap();
+    let Rebased::Clean(_) = one.rebase_onto(&main.branch).await.unwrap() else {
+        panic!("first is clean");
+    };
+    main.fast_forward(&one.branch).await.unwrap();
+    assert_eq!(
+        two.rebase_onto(&main.branch).await.unwrap(),
+        Rebased::Conflict(vec!["README.md".to_owned()])
+    );
+    assert_eq!(two.head().await.unwrap(), before, "the branch is untouched");
+    assert_eq!(read(&two.path.join("README.md")), "two\n");
+    assert!(
+        main.fast_forward(&two.branch).await.is_err(),
+        "not a descendant"
+    );
+}
+
+#[tokio::test]
+async fn merge_into_the_users_branch() {
+    let mut f = new_repo().await;
+    let (wt, base) = new_worktree(&mut f).await;
+    write(&wt.path.join("feature.txt"), "f\n");
+    let sha = wt.commit_step(&base, &step(1, "opus", "p")).await.unwrap();
+    let root = f.repo.root.clone();
+
+    write(&root.join("README.md"), "local edit\n");
+    let dirty = f.repo.merge_into_current(&wt.branch).await.unwrap_err();
+    assert!(dirty.to_string().contains("uncommitted changes"), "{dirty}");
+    must(&f.git, &root, &["checkout", "--quiet", "--", "README.md"]).await;
+
+    assert_eq!(
+        f.repo.merge_into_current(&wt.branch).await.unwrap(),
+        Merged::FastForward(sha)
+    );
+    // The user moves on; the next task's branch needs a merge commit.
+    write(&root.join("user.txt"), "u\n");
+    must(&f.git, &root, &["add", "user.txt"]).await;
+    must(&f.git, &root, &["commit", "--quiet", "-m", "user work"]).await;
+    let (wt2, _) = {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("second");
+        f.dirs.push(dir);
+        let b = must(&f.git, &root, &["rev-parse", "HEAD~1"]).await;
+        let w = f
+            .repo
+            .create_worktree(&path, "openchef/second", &b)
+            .await
+            .unwrap();
+        (w, b)
+    };
+    write(&wt2.path.join("other.txt"), "o\n");
+    // Step 2: step 1's commit is already in this branch's history.
+    wt2.commit_step(&base, &step(2, "opus", "p")).await.unwrap();
+    assert!(matches!(
+        f.repo.merge_into_current(&wt2.branch).await.unwrap(),
+        Merged::Merge(_)
+    ));
+    // Same file both sides: a conflict, aborted.
+    let wt3 = {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("third");
+        f.dirs.push(dir);
+        f.repo
+            .create_worktree(&path, "openchef/third", &base)
+            .await
+            .unwrap()
+    };
+    write(&wt3.path.join("user.txt"), "clash\n");
+    wt3.commit_step(&base, &step(1, "opus", "p")).await.unwrap();
+    let head = f.repo.head().await.unwrap();
+    assert_eq!(
+        f.repo.merge_into_current(&wt3.branch).await.unwrap(),
+        Merged::Conflict(vec!["user.txt".to_owned()])
+    );
+    assert_eq!(f.repo.head().await.unwrap(), head, "nothing changed");
+    assert_eq!(read(&root.join("user.txt")), "u\n");
+
+    must(&f.git, &root, &["checkout", "--quiet", "--detach"]).await;
+    assert!(
+        f.repo.merge_into_current(&wt3.branch).await.is_err(),
+        "detached"
+    );
 }
