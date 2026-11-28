@@ -11,7 +11,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use openchef_core::{Kind, Step, Task, TaskId, TaskStatus};
+use openchef_core::{Step, Task, TaskId, TaskStatus};
 use openchef_gitws::{Repo, Worktree};
 use openchef_runtime::{BoxFuture, SessionSpec};
 use openchef_store::{Store, TaskChange};
@@ -59,10 +59,13 @@ impl Default for Limits {
     }
 }
 
-/// Returns the session settings for an agent working on a task: permission mode and
-/// rules, env, approver, `ask_user`. The engine sets dir, model, effort, log path and
-/// `on_spawn` itself.
-pub type SpecFor = Arc<dyn Fn(&Task, &Agent) -> Result<SessionSpec, String> + Send + Sync>;
+/// Returns the session settings for an agent working on a task in a role: permission
+/// mode and rules, env, approver, `ask_user`. Every role but `implement` reads only and
+/// gets `plan` mode (§7.5). The engine sets dir, model, effort, log path and `on_spawn`
+/// itself.
+pub type SpecFor = Arc<
+    dyn Fn(&Task, &Agent, openchef_core::AttemptRole) -> Result<SessionSpec, String> + Send + Sync,
+>;
 
 /// A sandboxed task's verification sandbox and the environment it adds.
 pub type ConfineVerify = Arc<
@@ -347,6 +350,12 @@ impl<'e> Run<'e> {
     }
 
     async fn drive(&mut self) -> Result<(), Error> {
+        if self.task.status == TaskStatus::Planning {
+            self.workspace().await?;
+            if !self.plan().await? {
+                return Ok(());
+            }
+        }
         if self.task.status != TaskStatus::Running {
             return Err(Error::Config(format!(
                 "task {} is {}; only running tasks are driven",
@@ -362,12 +371,9 @@ impl<'e> Run<'e> {
                 return Ok(());
             }
         }
-        let to = if self.task.kind == Kind::Pipeline {
-            TaskStatus::Reviewing
-        } else {
-            TaskStatus::Done
-        };
-        self.set_status(to, "", None).await
+        // Review and the integration audit (R5.2) will send pipelines through
+        // `reviewing`; until then both kinds are done after their last step.
+        self.set_status(TaskStatus::Done, "", None).await
     }
 
     /// Creates (or, after a crash, finds) the task's worktree. The paths are recorded

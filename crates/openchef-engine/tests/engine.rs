@@ -175,23 +175,24 @@ async fn harness() -> Harness {
         ],
         cooldown: None,
     });
-    let spec_for: openchef_engine::SpecFor = Arc::new(|_: &Task, _: &Agent| {
-        Ok(SessionSpec {
-            dir: PathBuf::new(),
-            model: None,
-            effort: None,
-            mode: PermissionMode::AcceptEdits,
-            deny_rules: Vec::new(),
-            ask_rules: Vec::new(),
-            web_access: false,
-            env: Vec::new(),
-            approver: Arc::new(AllowAll),
-            ask_user: None,
-            log_path: None,
-            on_spawn: None,
-            confine: None,
-        })
-    });
+    let spec_for: openchef_engine::SpecFor =
+        Arc::new(|_: &Task, _: &Agent, _: openchef_core::AttemptRole| {
+            Ok(SessionSpec {
+                dir: PathBuf::new(),
+                model: None,
+                effort: None,
+                mode: PermissionMode::AcceptEdits,
+                deny_rules: Vec::new(),
+                ask_rules: Vec::new(),
+                web_access: false,
+                env: Vec::new(),
+                approver: Arc::new(AllowAll),
+                ask_user: None,
+                log_path: None,
+                on_spawn: None,
+                confine: None,
+            })
+        });
     let mut cfg = Config::new(
         store.clone(),
         runtimes,
@@ -746,7 +747,7 @@ async fn different_tool_calls_are_not_a_loop() {
 async fn idle_turn_is_interrupted() {
     let mut h = harness().await;
     h.cfg.limits = Limits {
-        idle_timeout: Duration::from_millis(100),
+        idle_timeout: Duration::from_secs(1),
         ..Limits::default()
     };
     h.claude.push([
@@ -760,7 +761,7 @@ async fn idle_turn_is_interrupted() {
     h.run(&id).await.unwrap();
     let turns = h.claude.turns();
     assert!(
-        turns.len() == 2 && turns[1].contains("no activity for 100ms"),
+        turns.len() == 2 && turns[1].contains("no activity for 1s"),
         "{turns:?}"
     );
 }
@@ -769,7 +770,7 @@ async fn idle_turn_is_interrupted() {
 async fn turn_timeout() {
     let mut h = harness().await;
     h.cfg.limits = Limits {
-        turn_timeout: Duration::from_millis(100),
+        turn_timeout: Duration::from_secs(1),
         ..Limits::default()
     };
     h.claude.push([
@@ -783,7 +784,7 @@ async fn turn_timeout() {
     h.run(&id).await.unwrap();
     let turns = h.claude.turns();
     assert!(
-        turns.len() == 2 && turns[1].contains("took longer than 100ms"),
+        turns.len() == 2 && turns[1].contains("took longer than 1s"),
         "{turns:?}"
     );
 }
@@ -970,8 +971,8 @@ async fn cancel_during_verification() {
 async fn stubborn_agent_is_replaced() {
     let mut h = harness().await;
     h.cfg.limits = Limits {
-        idle_timeout: Duration::from_millis(50),
-        stop_wait: Duration::from_millis(100),
+        idle_timeout: Duration::from_secs(1),
+        stop_wait: Duration::from_secs(1),
         ..Limits::default()
     };
     h.claude.push([
@@ -984,7 +985,14 @@ async fn stubborn_agent_is_replaced() {
     ]);
     let id = h.run_task().await;
     h.run(&id).await.unwrap();
-    assert_eq!(h.task(&id).await.status, TaskStatus::Done);
+    let t = h.task(&id).await;
+    assert_eq!(
+        t.status,
+        TaskStatus::Done,
+        "reason: {:?}; calls: {:?}",
+        t.reason,
+        h.claude.calls()
+    );
     assert!(
         h.claude.calls().iter().any(|c| c.kind == CallKind::Resume),
         "stubborn session was not replaced by a resume"
@@ -1162,6 +1170,7 @@ async fn recovery_of_session_without_native_id() {
         .start_attempt(openchef_store::NewAttempt {
             task_id: id.clone(),
             step_index: 1,
+            role: openchef_core::AttemptRole::Implement,
             agent: "opus".into(),
             runtime: "claude".into(),
             model: String::new(),

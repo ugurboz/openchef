@@ -9,7 +9,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use openchef_config::{Config, Paths, Phase};
-use openchef_core::{APPROVAL_TIMEOUT, Backend, Task};
+use openchef_core::{APPROVAL_TIMEOUT, AttemptRole, Backend, Task};
 use openchef_engine::service::{Deps, Service};
 use openchef_engine::{Agent, Config as EngineConfig, DynRuntime, Runtimes, SpecFor};
 use openchef_runtime::agy::{AgyOptions, AgyRuntime};
@@ -187,7 +187,8 @@ fn build(
         policies: policies.clone(),
         queue: queue.clone(),
     };
-    let spec_for: SpecFor = Arc::new(move |t: &Task, a: &Agent| session.spec(t, a));
+    let spec_for: SpecFor =
+        Arc::new(move |t: &Task, a: &Agent, role: AttemptRole| session.spec(t, a, role));
     let mut engine = EngineConfig::new(store.clone(), runtimes, router, spec_for, &paths.home);
     engine.verify_env = openchef_engine::verify::minimal_env(std::env::vars_os(), &[]);
     engine.confine_verify = Some(Arc::new(move |t: &Task| sandboxes.verify(t)));
@@ -247,8 +248,8 @@ impl SessionDeps {
     /// model, effort, log path and `on_spawn`). The settings files are read again for
     /// every session, so edits apply to the next one; `bypassPermissions` runs only in
     /// an isolated worktree (§9.3).
-    fn spec(&self, t: &Task, a: &Agent) -> Result<SessionSpec, String> {
-        let policy = self.policies.session(t)?;
+    fn spec(&self, t: &Task, a: &Agent, role: AttemptRole) -> Result<SessionSpec, String> {
+        let policy = self.policies.session(t, role)?;
         let mut env = session_env(&self.env, self.pools.get(&a.pool));
         let confine = if t.backend == Backend::Sandbox {
             let c = self.sandboxes.session(t, &a.runtime)?;
@@ -411,7 +412,9 @@ mod tests {
             pool: "p".into(),
             effort: None,
         };
-        let spec = session.spec(&t, &a).unwrap_or_else(|e| panic!("{e}"));
+        let spec = session
+            .spec(&t, &a, openchef_core::AttemptRole::Implement)
+            .unwrap_or_else(|e| panic!("{e}"));
         let m = spec
             .ask_user
             .unwrap_or_else(|| panic!("no ask_user server"));

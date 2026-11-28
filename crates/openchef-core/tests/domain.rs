@@ -63,6 +63,11 @@ fn task_transitions() {
         (WaitingQuota, Running),
         (NeedsAttention, Running),
         (NeedsAttention, Cancelled),
+        (Planning, WaitingQuota),
+        (Planning, NeedsAttention),
+        (NeedsAttention, Planning),
+        (WaitingQuota, Planning),
+        (AwaitingApproval, Planning),
     ];
     for (from, to) in allowed {
         assert_eq!(from.check_transition(to), Ok(()), "{from} → {to}");
@@ -138,7 +143,14 @@ fn active() {
         .copied()
         .filter(|s| s.is_active())
         .collect();
-    assert_eq!(active, vec![TaskStatus::Running, TaskStatus::Reviewing]);
+    assert_eq!(
+        active,
+        vec![
+            TaskStatus::Planning,
+            TaskStatus::Running,
+            TaskStatus::Reviewing
+        ]
+    );
 }
 
 #[test]

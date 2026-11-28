@@ -78,7 +78,7 @@ impl Run<'_> {
                 agent.name, agent.runtime
             ))
         })?;
-        let mut spec = (self.e.cfg.spec_for)(&self.task, agent)
+        let mut spec = (self.e.cfg.spec_for)(&self.task, agent, a.role)
             .map_err(|e| Error::Session(format!("session settings for {}: {e}", agent.name)))?;
         let log_dir = self
             .e

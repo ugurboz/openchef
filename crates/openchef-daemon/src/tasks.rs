@@ -7,12 +7,15 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use openchef_api::{
-    CODE_APPROVAL_SETTLED, CODE_INVALID_PARAMS, CODE_TASK_INVALID, ListParams, METHOD_TASK_CANCEL,
-    METHOD_TASK_GET, METHOD_TASK_LIST, METHOD_TASK_RETRY, METHOD_TASK_RUN, METHOD_TASK_UNWATCH,
-    METHOD_TASK_WATCH, NOTIFY_EVENT, NOTIFY_WATCH_ENDED, RunParams, TaskDetail, TaskParams,
-    TaskWire, WatchEnded, WatchParams, WatchResult, finished, rpc_error,
+    CODE_APPROVAL_SETTLED, CODE_INVALID_PARAMS, CODE_TASK_INVALID, EditParams, ListParams,
+    METHOD_PLAN_APPROVE, METHOD_PLAN_EDIT, METHOD_PLAN_GET, METHOD_PLAN_REJECT, METHOD_TASK_CANCEL,
+    METHOD_TASK_GET, METHOD_TASK_LIST, METHOD_TASK_PIPELINE, METHOD_TASK_RETRY, METHOD_TASK_RUN,
+    METHOD_TASK_UNWATCH, METHOD_TASK_WATCH, NOTIFY_EVENT, NOTIFY_WATCH_ENDED, PipelineParams,
+    PlanResult, RejectParams, RunParams, TaskDetail, TaskParams, TaskWire, WatchEnded, WatchParams,
+    WatchResult, finished, rpc_error,
 };
 use openchef_core::{PermissionMode, TaskId};
+use openchef_engine::plan::Plan;
 use openchef_engine::service::{Error as ServiceError, RunRequest, Service, Subscription};
 use openchef_runtime::linerpc::RpcError;
 use openchef_store::TaskFilter;
@@ -53,6 +56,26 @@ pub fn task_methods(service: Service) -> HashMap<String, Method> {
     methods.insert(
         METHOD_TASK_RUN.into(),
         method(&h, |h, _, p| async move { h.run(p).await }),
+    );
+    methods.insert(
+        METHOD_TASK_PIPELINE.into(),
+        method(&h, |h, _, p| async move { h.pipeline(p).await }),
+    );
+    methods.insert(
+        METHOD_PLAN_GET.into(),
+        method(&h, |h, _, p| async move { h.plan(p).await }),
+    );
+    methods.insert(
+        METHOD_PLAN_APPROVE.into(),
+        method(&h, |h, _, p| async move { h.approve(p).await }),
+    );
+    methods.insert(
+        METHOD_PLAN_REJECT.into(),
+        method(&h, |h, _, p| async move { h.reject(p).await }),
+    );
+    methods.insert(
+        METHOD_PLAN_EDIT.into(),
+        method(&h, |h, _, p| async move { h.edit(p).await }),
     );
     methods.insert(
         METHOD_TASK_LIST.into(),
@@ -141,36 +164,105 @@ impl Handlers {
     }
 
     async fn run(&self, params: Value) -> Result<Value, RpcError> {
-        let p: RunParams = decode_required(params)?;
-        let dir = PathBuf::from(&p.dir);
-        if !dir.is_absolute() {
-            return Err(rpc_error(
-                CODE_INVALID_PARAMS,
-                "dir must be an absolute path",
-            ));
-        }
-        let permissions = p
-            .permission_mode
-            .as_deref()
-            .filter(|m| !m.is_empty())
-            .map(|m| {
-                m.parse::<PermissionMode>()
-                    .map_err(|e| rpc_error(CODE_TASK_INVALID, e.to_string()))
-            })
-            .transpose()?;
-        let req = RunRequest {
-            prompt: p.prompt,
-            dir,
-            verify: p.verify,
-            agent: p.agent,
-            importance: None,
-            permissions,
-            sandbox: p.sandbox,
-        };
+        let req = request(decode_required(params)?)?;
         let t = self.service.run(req).await.map_err(|e| rpc_err(&e))?;
         encode(&TaskWire::from(&t))
     }
 
+    async fn pipeline(&self, params: Value) -> Result<Value, RpcError> {
+        let p: PipelineParams = decode_required(params)?;
+        let req = request(p.run)?;
+        let t = self
+            .service
+            .pipeline(req, p.yes)
+            .await
+            .map_err(|e| rpc_err(&e))?;
+        encode(&TaskWire::from(&t))
+    }
+
+    async fn plan(&self, params: Value) -> Result<Value, RpcError> {
+        let p: TaskParams = decode_required(params)?;
+        let d = self
+            .service
+            .get(&task_id(&p.id)?)
+            .await
+            .map_err(|e| rpc_err(&e))?;
+        encode(&plan_result(&d.task, &d.steps))
+    }
+
+    async fn approve(&self, params: Value) -> Result<Value, RpcError> {
+        let p: TaskParams = decode_required(params)?;
+        let t = self
+            .service
+            .approve(&task_id(&p.id)?)
+            .await
+            .map_err(|e| rpc_err(&e))?;
+        encode(&TaskWire::from(&t))
+    }
+
+    async fn reject(&self, params: Value) -> Result<Value, RpcError> {
+        let p: RejectParams = decode_required(params)?;
+        let t = self
+            .service
+            .reject(&task_id(&p.id)?, p.reason.as_deref())
+            .await
+            .map_err(|e| rpc_err(&e))?;
+        encode(&TaskWire::from(&t))
+    }
+
+    async fn edit(&self, params: Value) -> Result<Value, RpcError> {
+        let p: EditParams = decode_required(params)?;
+        let id = task_id(&p.id)?;
+        let steps = self
+            .service
+            .edit_plan(&id, &p.plan)
+            .await
+            .map_err(|e| rpc_err(&e))?;
+        let d = self.service.get(&id).await.map_err(|e| rpc_err(&e))?;
+        encode(&plan_result(&d.task, &steps))
+    }
+}
+
+/// A task with its plan; the title is the task's first line, since the plan's own
+/// title is not stored.
+fn plan_result(t: &openchef_core::Task, steps: &[openchef_core::Step]) -> PlanResult {
+    PlanResult {
+        task: TaskWire::from(t),
+        plan: Plan::from_steps(&openchef_engine::service::title(&t.prompt), steps),
+    }
+}
+
+/// A run or pipeline request from its parameters.
+fn request(p: RunParams) -> Result<RunRequest, RpcError> {
+    let dir = PathBuf::from(&p.dir);
+    if !dir.is_absolute() {
+        return Err(rpc_error(
+            CODE_INVALID_PARAMS,
+            "dir must be an absolute path",
+        ));
+    }
+    let permissions = p
+        .permission_mode
+        .as_deref()
+        .filter(|m| !m.is_empty())
+        .map(|m| {
+            m.parse::<PermissionMode>()
+                .map_err(|e| rpc_error(CODE_TASK_INVALID, e.to_string()))
+        })
+        .transpose()?;
+    let req = RunRequest {
+        prompt: p.prompt,
+        dir,
+        verify: p.verify,
+        agent: p.agent,
+        importance: None,
+        permissions,
+        sandbox: p.sandbox,
+    };
+    Ok(req)
+}
+
+impl Handlers {
     async fn list(&self, params: Value) -> Result<Value, RpcError> {
         let p: ListParams = decode(params)?;
         let tasks = self

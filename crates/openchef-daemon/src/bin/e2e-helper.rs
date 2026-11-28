@@ -238,7 +238,8 @@ async fn services(paths: Paths, runtime: ProcRuntime) -> Result<Services, String
         }],
         cooldown: None,
     });
-    let spec_for: SpecFor = Arc::new(|_: &Task, _: &Agent| Ok(spec()));
+    let spec_for: SpecFor =
+        Arc::new(|_: &Task, _: &Agent, _: openchef_core::AttemptRole| Ok(spec()));
     let cfg = Config::new(store.clone(), runtimes, router, spec_for, &paths.home);
     let service = Service::new(Deps {
         engine: cfg,

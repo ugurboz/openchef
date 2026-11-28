@@ -131,6 +131,7 @@ async fn start_attempt(db: &Store) -> (Task, openchef_core::Attempt) {
         .start_attempt(NewAttempt {
             task_id: task.id.clone(),
             step_index: 1,
+            role: openchef_core::AttemptRole::Implement,
             agent: "opus".to_owned(),
             runtime: "claude".to_owned(),
             model: "claude-opus-5-5".to_owned(),
@@ -618,6 +619,7 @@ async fn attempts() {
     let again = NewAttempt {
         task_id: task.id.clone(),
         step_index: 1,
+        role: openchef_core::AttemptRole::Implement,
         agent: "opus".to_owned(),
         runtime: "claude".to_owned(),
         model: String::new(),
@@ -671,6 +673,7 @@ async fn start_attempt_rejects() {
     let mut a = NewAttempt {
         task_id: task.id.clone(),
         step_index: 1,
+        role: openchef_core::AttemptRole::Implement,
         agent: "opus".to_owned(),
         runtime: "claude".to_owned(),
         model: String::new(),
@@ -876,6 +879,7 @@ async fn cancel_stops_work() {
     let next = NewAttempt {
         task_id: task.id.clone(),
         step_index: 1,
+        role: openchef_core::AttemptRole::Implement,
         agent: "x".to_owned(),
         runtime: "codex".to_owned(),
         model: String::new(),

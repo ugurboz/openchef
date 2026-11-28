@@ -278,3 +278,59 @@ async fn closed_store_rejects_writes() {
     store.close().await.unwrap();
     assert!(matches!(other.write(|_| Ok(())).await, Err(Error::Closed)));
 }
+
+/// Migration 0003 rebuilds `attempts` (D-037): existing attempts keep their rows as
+/// `implement`, and the sessions that reference them survive the rebuild (foreign keys
+/// are off while it runs, then checked).
+#[tokio::test]
+async fn attempt_roles_migration_keeps_history() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = db_path(&dir);
+    let old = vec![
+        Migration::new("0001_init.sql", include_str!("../migrations/0001_init.sql")),
+        Migration::new(
+            "0002_quota.sql",
+            include_str!("../migrations/0002_quota.sql"),
+        ),
+    ];
+    let store = Store::open_with(
+        &path,
+        OpenOptions {
+            migrations: Some(old),
+            ..OpenOptions::default()
+        },
+    )
+    .await
+    .unwrap();
+    store.close().await.unwrap();
+    let t = "2026-11-28T00:00:00.000000000Z";
+    let conn = rusqlite::Connection::open(&path).unwrap();
+    conn.execute_batch(&format!(
+        "PRAGMA foreign_keys = ON;
+         INSERT INTO tasks (id, kind, status, prompt, repo_root, mode, backend, importance,
+                            permission_mode, created_at, updated_at)
+             VALUES ('aaaaaaaaaa', 'run', 'done', 'p', '/r', 'isolated', 'local', 'normal',
+                     'manual', '{t}', '{t}');
+         INSERT INTO steps (task_id, idx, title, prompt, importance, status, updated_at)
+             VALUES ('aaaaaaaaaa', 1, 's', 'p', 'normal', 'verified', '{t}');
+         INSERT INTO attempts (id, task_id, step_idx, agent, runtime, pool, status, started_at)
+             VALUES (7, 'aaaaaaaaaa', 1, 'opus', 'claude', 'max', 'succeeded', '{t}');
+         INSERT INTO sessions (attempt_id, runtime, native_id, pid, start_token, state, opened_at)
+             VALUES (7, 'claude', 'n1', 42, '1', 'closed', '{t}');"
+    ))
+    .unwrap();
+    drop(conn);
+
+    let store = Store::open(&path).await.unwrap();
+    assert_eq!(store.schema_version().await.unwrap(), 3);
+    let id = "aaaaaaaaaa".parse().unwrap();
+    let attempts = store.attempts(&id).await.unwrap();
+    assert_eq!(attempts.len(), 1);
+    assert_eq!(attempts[0].role, openchef_core::AttemptRole::Implement);
+    assert_eq!(
+        store.task_sessions(&id, false).await.unwrap().len(),
+        1,
+        "sessions survived"
+    );
+    store.close().await.unwrap();
+}

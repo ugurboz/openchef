@@ -208,7 +208,7 @@ fn start_daemon(paths: &Paths, claude: &FakeRuntime, quota_slot: &QuotaSlot) -> 
                     let late: Arc<OnceLock<Service>> = Arc::new(OnceLock::new());
                     let spec_for: openchef_engine::SpecFor = {
                         let late = Arc::clone(&late);
-                        Arc::new(move |t: &Task, a: &Agent| {
+                        Arc::new(move |t: &Task, a: &Agent, _: openchef_core::AttemptRole| {
                             Ok(spec(Arc::new(Queued {
                                 service: Arc::clone(&late),
                                 task: t.id.clone(),
@@ -876,4 +876,116 @@ fn sandbox_is_refused_without_a_sandbox() {
     assert_eq!(e.claude.remaining(), 0);
     let (_, list, _) = e.cli(&["status", "--all"]);
     assert!(!list.contains("anything"), "no task was created:\n{list}");
+}
+
+fn plan_json(titles: &[&str]) -> String {
+    let steps: Vec<serde_json::Value> = titles
+        .iter()
+        .map(|t| {
+            json!({"title": t, "prompt": format!("Do {t}"), "files": ["out.txt"], "verify": null,
+                        "size": "small", "importance": "normal", "reason": "r"})
+        })
+        .collect();
+    json!({"title": "Goal", "steps": steps}).to_string()
+}
+
+/// R5.1 acceptance: `pipeline` stops at the plan, `plan` shows it, `plan edit --file`
+/// refuses an invalid plan and stores a valid one, `plan approve` runs it to done.
+#[test]
+fn pipeline_plan_edit_and_approve() {
+    let e = CliEnv::new();
+    e.claude.push([Turn::completed(plan_json(&["write out"]))]);
+    let (code, out, err) = e.cli(&["pipeline", "-q", "add", "out.txt"]);
+    assert_eq!(code, exit::OK, "pipeline: {err}\n{out}");
+    let id = task_id_from(&out);
+    for want in [
+        "plan for task",
+        "(awaiting_approval): add out.txt",
+        "⏸ plan ready: Goal (1 step)",
+        "1. write out  [normal]",
+        "verify: none",
+        "approve: openchef plan approve",
+    ] {
+        assert!(out.contains(want), "pipeline output lacks {want:?}:\n{out}");
+    }
+    let (code, shown, _) = e.cli(&["plan", &id, "--json"]);
+    let doc: serde_json::Value = serde_json::from_str(&shown).unwrap();
+    assert!(
+        code == exit::OK && doc["steps"][0]["title"] == "write out",
+        "{shown}"
+    );
+
+    let dir = tempfile::tempdir().unwrap();
+    let bad = dir.path().join("bad.json");
+    std::fs::write(&bad, plan_json(&[""])).unwrap();
+    let (code, _, err) = e.cli(&["plan", "edit", &id, "--file", bad.to_str().unwrap()]);
+    assert!(
+        code != exit::OK && err.contains("not valid"),
+        "invalid edit: {err}"
+    );
+    let good = dir.path().join("good.json");
+    std::fs::write(&good, plan_json(&["first", "second"])).unwrap();
+    let (code, out, err) = e.cli(&["plan", "edit", &id, "--file", good.to_str().unwrap()]);
+    assert!(
+        code == exit::OK && out.contains("2. second"),
+        "edit: {err}\n{out}"
+    );
+
+    e.claude.push([
+        Turn::editing("one", |d: &Path| {
+            std::fs::write(d.join("out.txt"), "1").map_err(|e| e.to_string())
+        }),
+        Turn::editing("two", |d: &Path| {
+            std::fs::write(d.join("out.txt"), "2").map_err(|e| e.to_string())
+        }),
+    ]);
+    let (code, out, err) = e.cli(&["plan", "approve", &id]);
+    assert!(
+        code == exit::OK && out.contains("plan approved"),
+        "approve: {err}\n{out}"
+    );
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let (_, detail, _) = e.cli(&["status", &id]);
+        if detail.contains("done") && detail.contains("step 2  verified") {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the plan did not finish:\n{detail}"
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    let (code, _, err) = e.cli(&["plan", "approve", &id]);
+    assert!(
+        code != exit::OK && err.contains("only a plan awaiting approval"),
+        "{err}"
+    );
+}
+
+/// `pipeline --yes` runs a valid plan without stopping; `plan reject` cancels.
+#[test]
+fn pipeline_yes_and_reject() {
+    let e = CliEnv::new();
+    e.claude.push([
+        Turn::completed(plan_json(&["auto"])),
+        Turn::editing("done", |d: &Path| {
+            std::fs::write(d.join("out.txt"), "x").map_err(|e| e.to_string())
+        }),
+    ]);
+    let (code, out, err) = e.cli(&["pipeline", "--yes", "auto"]);
+    assert_eq!(code, exit::OK, "{err}\n{out}");
+    assert!(
+        out.contains("✔ done"),
+        "--yes followed through the approval:\n{out}"
+    );
+
+    e.claude.push([Turn::completed(plan_json(&["never"]))]);
+    let (_, out, _) = e.cli(&["pipeline", "-q", "nope"]);
+    let id = task_id_from(&out);
+    let (code, out, err) = e.cli(&["plan", "reject", &id, "too", "risky"]);
+    assert!(
+        code == exit::OK && out.contains("cancelled"),
+        "reject: {err}\n{out}"
+    );
 }

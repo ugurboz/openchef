@@ -62,6 +62,14 @@ pub(crate) enum Command {
     /// openchef/<task>. Output streams live; Ctrl-C detaches without cancelling (use
     /// `openchef cancel`).
     Run(RunArgs),
+    /// Plan a goal, approve the plan, then implement it step by step.
+    ///
+    /// A planner agent reads the repository (read-only) and proposes up to seven steps.
+    /// The task then waits for you: read the plan with `openchef plan <task>`, approve,
+    /// edit or reject it. With --yes a valid plan runs at once.
+    Pipeline(PipelineArgs),
+    /// Show a pipeline's plan, or approve, edit or reject it.
+    Plan(PlanArgs),
     /// List tasks, or show one task's steps and attempts.
     Status(StatusArgs),
     /// Show a task's events; -f follows them live.
@@ -207,6 +215,52 @@ pub(crate) struct RunArgs {
 }
 
 #[derive(Debug, clap::Args)]
+pub(crate) struct PipelineArgs {
+    #[command(flatten)]
+    pub(crate) run: RunArgs,
+    /// Run a valid plan without waiting for approval.
+    #[arg(long)]
+    pub(crate) yes: bool,
+}
+
+#[derive(Debug, clap::Args)]
+#[command(args_conflicts_with_subcommands = true)]
+pub(crate) struct PlanArgs {
+    #[command(subcommand)]
+    pub(crate) command: Option<PlanCommand>,
+    /// The task id.
+    pub(crate) task: Option<String>,
+    /// Print the plan as JSON.
+    #[arg(long)]
+    pub(crate) json: bool,
+}
+
+#[derive(Debug, Subcommand)]
+pub(crate) enum PlanCommand {
+    /// Approve the plan: its steps run.
+    Approve {
+        /// The task id.
+        task: String,
+    },
+    /// Reject the plan, cancelling the task.
+    Reject {
+        /// The task id.
+        task: String,
+        /// Why, for the record.
+        #[arg(num_args = 0.., value_name = "REASON")]
+        reason: Vec<String>,
+    },
+    /// Edit the plan as JSON in $VISUAL or $EDITOR, or replace it from a file.
+    Edit {
+        /// The task id.
+        task: String,
+        /// Read the new plan from this JSON file instead of opening an editor.
+        #[arg(long, value_name = "FILE")]
+        file: Option<PathBuf>,
+    },
+}
+
+#[derive(Debug, clap::Args)]
 pub(crate) struct StatusArgs {
     /// A task id; without one, tasks are listed.
     pub(crate) task: Option<String>,
@@ -299,9 +353,7 @@ pub(crate) enum OnOff {
 
 /// Commands of §12.1 that later milestones build, and the milestone that does.
 pub(crate) const PENDING: &[(&str, &str)] = &[
-    ("pipeline", "R5"),
     ("merge", "R5"),
-    ("plan", "R5"),
     ("deferred", "R7"),
     ("report", "R7"),
     ("attach", "R3"),

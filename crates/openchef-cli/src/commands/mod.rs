@@ -5,6 +5,7 @@ pub(crate) mod daemon;
 pub(crate) mod doctor;
 pub(crate) mod init;
 pub(crate) mod mcp;
+pub(crate) mod plans;
 pub(crate) mod quota;
 pub(crate) mod tasks;
 pub(crate) mod version;
@@ -38,6 +39,10 @@ pub(crate) fn dispatch(
             daemon::run(out, &deps.paths(cli.home.as_ref())?, &command)
         }
         Some(Command::Run(args)) => tasks::run(out, deps, &deps.paths(cli.home.as_ref())?, &args),
+        Some(Command::Pipeline(args)) => {
+            tasks::pipeline(out, deps, &deps.paths(cli.home.as_ref())?, &args)
+        }
+        Some(Command::Plan(args)) => plans::run(out, &deps.paths(cli.home.as_ref())?, &args),
         Some(Command::Status(args)) => tasks::status(out, &deps.paths(cli.home.as_ref())?, &args),
         Some(Command::Logs(args)) => tasks::logs(out, &deps.paths(cli.home.as_ref())?, &args),
         Some(Command::Cancel(args)) => tasks::act(

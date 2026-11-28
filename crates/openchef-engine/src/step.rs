@@ -155,7 +155,7 @@ impl Run<'_> {
     /// Stops whatever an earlier daemon left of an attempt: kills a process that is
     /// somehow still alive, closes its sessions and ends turns left in flight. Returns
     /// the last session and the message of the interrupted turn, if any.
-    async fn settle(
+    pub(crate) async fn settle(
         &self,
         a: &Attempt,
     ) -> Result<(Option<openchef_core::Session>, Option<String>), Error> {
@@ -357,6 +357,7 @@ impl Run<'_> {
                 .start_attempt(NewAttempt {
                     task_id: self.task.id.clone(),
                     step_index: index,
+                    role: openchef_core::AttemptRole::Implement,
                     agent: agent.name.clone(),
                     runtime: agent.runtime.clone(),
                     model: agent.model.clone().unwrap_or_default(),
@@ -416,8 +417,8 @@ impl Run<'_> {
             let Some(l) = live.as_mut() else {
                 return Err(Error::Session("the attempt has no session".into()));
             };
-            match self.run_turn(l, a, agent, kind, &msg).await? {
-                TurnEnd::Completed => {
+            match self.run_turn(l, a, agent, kind, &msg, None).await? {
+                TurnEnd::Completed(_) => {
                     let outcome = self.verify(i).await?;
                     match outcome {
                         None => return self.commit(i, a, agent).await,
@@ -451,7 +452,9 @@ impl Run<'_> {
                             why.clone(),
                             stall_prompt(&self.task, &self.steps[i], self.total(), why),
                         ),
-                        TurnEnd::Completed | TurnEnd::Failed(_) => (String::new(), String::new()),
+                        TurnEnd::Completed(_) | TurnEnd::Failed(_) => {
+                            (String::new(), String::new())
+                        }
                     };
                     if !self.retry(i, a, retries, &why).await? {
                         return self
@@ -743,7 +746,7 @@ impl Run<'_> {
         Ok(AttemptEnd::Parked)
     }
 
-    fn attempt_ended(
+    pub(crate) fn attempt_ended(
         &self,
         step: u32,
         a: &Attempt,

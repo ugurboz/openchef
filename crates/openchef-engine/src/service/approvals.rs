@@ -82,6 +82,13 @@ impl Service {
         drop(inner.state().waiting.insert(a.id, tx));
         let _waiting = Waiting { inner, id: a.id };
         inner.approval_event(EventKind::ApprovalRequested, &a);
+        // The request was listable before the waiter existed: a decision in between
+        // found no one to wake. `settle` writes the store before it looks for the
+        // waiter, so reading the store now sees every such decision.
+        let current = inner.store.approval(a.id).await?;
+        if current.status != ApprovalStatus::Pending {
+            return Ok(current);
+        }
         if let Some(notify) = &inner.notify
             && !inner.events.watched(&a.task_id)
         {

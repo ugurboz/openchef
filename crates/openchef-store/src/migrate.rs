@@ -37,6 +37,10 @@ pub(crate) fn embedded() -> Vec<Migration> {
             "0002_quota.sql",
             include_str!("../migrations/0002_quota.sql"),
         ),
+        Migration::new(
+            "0003_attempt_roles.sql",
+            include_str!("../migrations/0003_attempt_roles.sql"),
+        ),
     ]
 }
 
@@ -125,10 +129,25 @@ pub(crate) fn migrate(conn: &mut Connection, migrations: &[Migration]) -> Result
             )));
         }
     }
-    for m in migrations
+    let pending: Vec<&Checked> = migrations
         .iter()
         .filter(|m| !applied.contains_key(&m.version))
-    {
+        .collect();
+    if pending.is_empty() {
+        return Ok(());
+    }
+    // SQLite's procedure for changing a table's schema: foreign keys off (outside any
+    // transaction, where the pragma has effect), check them inside each migration's
+    // transaction, on again afterwards. Otherwise rebuilding a referenced table would
+    // cascade-delete the rows that reference it.
+    conn.execute_batch("PRAGMA foreign_keys = OFF")?;
+    let applied_all = apply(conn, &pending);
+    conn.execute_batch("PRAGMA foreign_keys = ON")?;
+    applied_all
+}
+
+fn apply(conn: &mut Connection, pending: &[&Checked]) -> Result<(), Error> {
+    for m in pending {
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let done = tx
             .query_row(
@@ -142,6 +161,15 @@ pub(crate) fn migrate(conn: &mut Connection, migrations: &[Migration]) -> Result
             tx.execute_batch(&m.sql).map_err(|e| {
                 Error::InvalidMigration(format!("apply {:04}_{}: {e}", m.version, m.name))
             })?;
+            let broken: Option<String> = tx
+                .query_row("PRAGMA foreign_key_check", [], |r| r.get(0))
+                .optional()?;
+            if let Some(table) = broken {
+                return Err(Error::InvalidMigration(format!(
+                    "apply {:04}_{}: breaks a foreign key in {table}",
+                    m.version, m.name
+                )));
+            }
             let _ = tx.execute(
                 "INSERT INTO schema_migrations (version, name, checksum, applied_at) VALUES (?1, ?2, ?3, ?4)",
                 params![m.version, m.name, m.checksum, format_time(OffsetDateTime::now_utc())],

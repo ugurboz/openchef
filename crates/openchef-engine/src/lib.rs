@@ -6,6 +6,8 @@
 
 mod engine;
 mod events;
+pub mod plan;
+mod planning;
 mod prompts;
 mod recover;
 mod router;
