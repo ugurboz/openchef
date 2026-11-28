@@ -157,6 +157,8 @@ impl Env {
             self.dir.path(),
         );
         cfg.sleep = Some(Arc::new(|_| Box::pin(async {})));
+        // As the daemon does: verification finds its tools (`cmd.exe` has no default PATH).
+        cfg.verify_env = openchef_engine::verify::minimal_env(std::env::vars_os(), &[]);
         let mut deps = Deps {
             engine: cfg,
             event_dir: self.dir.path().join("sessions"),

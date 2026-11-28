@@ -39,10 +39,11 @@ struct Remote {
 }
 
 impl Remote {
+    /// Writes one line in a single write: a pipe write below `PIPE_BUF` is atomic, so a
+    /// peer that stops at an oversize line cannot break the pipe halfway through it.
     fn say(&mut self, line: &str) {
         let w = self.to_peer.as_mut().unwrap();
-        w.write_all(line.as_bytes()).unwrap();
-        w.write_all(b"\n").unwrap();
+        w.write_all(format!("{line}\n").as_bytes()).unwrap();
     }
 
     async fn heard(&mut self) -> Value {
