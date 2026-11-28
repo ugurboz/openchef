@@ -982,10 +982,11 @@ fn review_answer(findings: &[(&str, &str, Option<&str>)]) -> String {
     serde_json::json!({ "findings": f }).to_string()
 }
 
-/// A planned one-step pipeline of `importance`, approved and waiting for its turns.
+/// A planned one-step pipeline of `importance`, approved and waiting for its turns. Its
+/// verification passes on every OS, so review fixes are re-verified for real.
 async fn approved_pipeline(e: &Env, s: &Service, importance: &str) -> TaskId {
     let plan = serde_json::json!({"title": "T", "steps": [{"title": "only", "prompt": "write out.txt",
-        "files": ["out.txt"], "verify": "true", "size": "small", "importance": importance, "reason": "r"}]});
+        "files": ["out.txt"], "verify": "git --version", "size": "small", "importance": importance, "reason": "r"}]});
     e.claude.push([Turn::completed(plan.to_string())]);
     let mut req = e.run("reviewed");
     // The task's importance is the floor of its steps'.
@@ -1118,6 +1119,82 @@ async fn review_depth_and_invalid_reviews() {
             .any(|ev| ev.kind == EventKind::ReviewFinished
                 && ev.status.as_deref() == Some("skipped")),
         "the skipped review is recorded"
+    );
+    stop(&s).await;
+}
+
+/// The last round's fixes have no review left to confirm them: findings the implementer
+/// reports fixed are fixed, the others stay open, and the step is committed.
+#[tokio::test(flavor = "multi_thread")]
+async fn review_round_limit_commits_with_open_findings() {
+    let e = env().await;
+    let s = e.service();
+    let id = approved_pipeline(&e, &s, "normal").await;
+    e.claude.push([
+        Turn::editing("done", write_file),
+        Turn::completed("FIXED F1\nI could not get to F2."),
+    ]);
+    e.codex.push([Turn::completed(review_answer(&[
+        ("F1", "blocker", Some("out.txt")),
+        ("F2", "major", Some("out.txt")),
+    ]))]);
+    let _a = s.approve(&id).await.unwrap();
+    e.wait_status(&id, TaskStatus::Done).await;
+    assert_eq!(e.codex.turns().len(), 1, "normal importance reviews once");
+    let status: Vec<(String, String)> = e
+        .store
+        .findings(&id)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|f| (f.finding, f.status))
+        .collect();
+    assert_eq!(
+        status,
+        [
+            ("F1".to_owned(), "fixed".to_owned()),
+            ("F2".to_owned(), "open".to_owned())
+        ]
+    );
+    stop(&s).await;
+}
+
+/// With no agent of another provider the review is skipped, said so, and the step is
+/// committed: the implementer's provider never reviews its own work.
+#[tokio::test(flavor = "multi_thread")]
+async fn review_needs_another_provider() {
+    let e = env().await;
+    let s = e.service_deps(|d| {
+        d.engine.router = Arc::new(Ordered {
+            agents: vec![Agent {
+                name: "opus".into(),
+                runtime: "claude".into(),
+                model: None,
+                pool: "claude-max".into(),
+                effort: None,
+            }],
+            cooldown: None,
+        });
+    });
+    let id = approved_pipeline(&e, &s, "high").await;
+    e.claude.push([Turn::editing("done", write_file)]);
+    let _a = s.approve(&id).await.unwrap();
+    e.wait_status(&id, TaskStatus::Done).await;
+    assert_eq!(e.claude.turns().len(), 2, "planner and implementer only");
+    let (past, sub) = s.watch(&id, true).await.unwrap();
+    s.unwatch(&sub);
+    let skipped = past
+        .iter()
+        .find(|ev| ev.kind == EventKind::ReviewFinished)
+        .unwrap();
+    assert_eq!(skipped.status.as_deref(), Some("skipped"));
+    assert!(
+        skipped
+            .message
+            .as_deref()
+            .unwrap_or_default()
+            .contains("another provider"),
+        "{skipped:?}"
     );
     stop(&s).await;
 }
