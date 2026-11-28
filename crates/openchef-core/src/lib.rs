@@ -15,6 +15,7 @@ mod macros;
 pub use serde as __serde;
 
 mod approval;
+mod debate;
 mod error;
 mod id;
 mod machine;
@@ -23,6 +24,7 @@ mod task;
 mod vocab;
 
 pub use approval::{APPROVAL_TIMEOUT, Approval, ApprovalKind, ApprovalStatus, DecidedBy, Decision};
+pub use debate::{Debate, DebateDepth, MAX_CRITICS, MAX_ROUNDS};
 pub use error::Error;
 pub use id::TaskId;
 pub use machine::{Entity, StateMachine};

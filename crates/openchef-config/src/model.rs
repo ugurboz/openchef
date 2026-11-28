@@ -122,6 +122,8 @@ pub struct Config {
     pub routing: BTreeMap<Phase, PhaseRouting>,
     /// Quota tracking switches.
     pub quota: Quota,
+    /// Debate depth and budget (§7.5, `[debate]`).
+    pub debate: openchef_core::Debate,
 }
 
 /// One quota bucket the user owns.

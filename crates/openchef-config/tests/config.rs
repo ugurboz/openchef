@@ -339,3 +339,57 @@ fn budgets() {
         assert!(Config::parse(&bad).is_err(), "accepted:\n{bad}");
     }
 }
+
+#[test]
+fn debate_table_and_budget() {
+    use openchef_core::Importance;
+    let base = "[pools.p]\nprovider = \"anthropic\"\nbilling = \"subscription\"\n[agents.a]\nruntime = \"claude\"\npool = \"p\"\ntier = \"frontier\"\n";
+    let cfg = Config::parse(base).unwrap();
+    assert_eq!(
+        cfg.debate,
+        openchef_core::Debate::default(),
+        "§7.5 defaults"
+    );
+    assert!(
+        !cfg.to_toml().unwrap().contains("[debate"),
+        "defaults are not written out"
+    );
+    let cfg = Config::parse(&format!(
+        "{base}[debate]\nmax_turns_per_task = 12\n[debate.normal]\nreview_rounds = 2\n[debate.high]\ncouncil_critics = 2\n"
+    ))
+    .unwrap();
+    assert_eq!(cfg.debate.max_turns_per_task, Some(12));
+    assert_eq!(cfg.debate.depth(Importance::Normal).review_rounds, 2);
+    let high = cfg.debate.depth(Importance::High);
+    assert_eq!(
+        (
+            high.council_critics,
+            high.council_rounds,
+            high.review_rounds
+        ),
+        (2, 2, 2),
+        "unset keys keep the table's value"
+    );
+    assert_eq!(
+        Config::parse(&cfg.to_toml().unwrap()).unwrap(),
+        cfg,
+        "round trip"
+    );
+    let err = Config::parse(&format!(
+        "{base}[debate]\nmax_turns_per_task = 0\n[debate.low]\ncouncil_critics = 1\n[debate.critical]\nreview_rounds = 9\ncouncil_rounds = -1\n"
+    ))
+    .unwrap_err();
+    let got = problems(err);
+    for want in [
+        "debate.max_turns_per_task: must be positive",
+        "debate.low: council_critics and council_rounds",
+        "debate.critical: review_rounds: at most 5",
+        "debate.critical.council_rounds: must be a non-negative integer",
+    ] {
+        assert!(got.iter().any(|p| p.contains(want)), "{want}: {got:?}");
+    }
+    assert!(
+        Config::parse(&format!("{base}[debate.normal]\nreviewers = 2\n")).is_err(),
+        "unknown key accepted"
+    );
+}

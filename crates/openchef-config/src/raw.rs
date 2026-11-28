@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use std::fmt::Display;
 use std::str::FromStr;
 
-use openchef_core::{Effort, Tier};
+use openchef_core::{Debate, DebateDepth, Effort, Importance, Tier};
 use serde::{Deserialize, Serialize};
 use toml::de::{DeTable, DeValue};
 
@@ -25,6 +25,8 @@ struct RawConfig {
     routing: BTreeMap<String, RawPhase>,
     #[serde(default, skip_serializing_if = "RawQuota::is_empty")]
     quota: RawQuota,
+    #[serde(default, skip_serializing_if = "RawDebate::is_empty")]
+    debate: RawDebate,
 }
 
 #[derive(Debug, Default, Deserialize, Serialize)]
@@ -85,6 +87,58 @@ impl RawQuota {
     }
 }
 
+#[derive(Debug, Default, Deserialize, Serialize)]
+struct RawDebate {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    max_turns_per_task: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    low: Option<RawDepth>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    normal: Option<RawDepth>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    high: Option<RawDepth>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    critical: Option<RawDepth>,
+}
+
+impl RawDebate {
+    fn is_empty(&self) -> bool {
+        self.max_turns_per_task.is_none()
+            && self.low.is_none()
+            && self.normal.is_none()
+            && self.high.is_none()
+            && self.critical.is_none()
+    }
+
+    const fn level(&self, importance: Importance) -> Option<&RawDepth> {
+        match importance {
+            Importance::Low => self.low.as_ref(),
+            Importance::Normal => self.normal.as_ref(),
+            Importance::High => self.high.as_ref(),
+            Importance::Critical => self.critical.as_ref(),
+        }
+    }
+
+    const fn level_mut(&mut self, importance: Importance) -> &mut Option<RawDepth> {
+        match importance {
+            Importance::Low => &mut self.low,
+            Importance::Normal => &mut self.normal,
+            Importance::High => &mut self.high,
+            Importance::Critical => &mut self.critical,
+        }
+    }
+}
+
+#[derive(Debug, Default, Deserialize, Serialize)]
+struct RawDepth {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    council_critics: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    council_rounds: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    review_rounds: Option<i64>,
+}
+
 /// Which keys a table may hold. `Free` tables take any key (names chosen by the user).
 #[derive(Clone, Copy)]
 enum Schema {
@@ -118,11 +172,24 @@ const PHASE: Schema = Schema::Keys(&[
     ("weights", Schema::Free),
 ]);
 const QUOTA: Schema = Schema::Keys(&[("probes", Schema::Leaf), ("providers", Schema::Free)]);
+const DEPTH: Schema = Schema::Keys(&[
+    ("council_critics", Schema::Leaf),
+    ("council_rounds", Schema::Leaf),
+    ("review_rounds", Schema::Leaf),
+]);
+const DEBATE: Schema = Schema::Keys(&[
+    ("max_turns_per_task", Schema::Leaf),
+    ("low", DEPTH),
+    ("normal", DEPTH),
+    ("high", DEPTH),
+    ("critical", DEPTH),
+]);
 const ROOT: Schema = Schema::Keys(&[
     ("pools", Schema::Named(&POOL)),
     ("agents", Schema::Named(&AGENT)),
     ("routing", Schema::Named(&PHASE)),
     ("quota", QUOTA),
+    ("debate", DEBATE),
 ]);
 
 pub(crate) fn parse(text: &str) -> Result<Config, Error> {
@@ -230,12 +297,14 @@ fn validate(raw: &RawConfig) -> Result<Config, Vec<String>> {
     let agents = validate_agents(&raw.agents, &raw.pools, &mut p);
     let routing = validate_routing(&raw.routing, &raw.agents, &mut p);
     let quota = validate_quota(&raw.quota, &mut p);
+    let debate = validate_debate(&raw.debate, &mut p);
     if p.0.is_empty() {
         Ok(Config {
             pools,
             agents,
             routing,
             quota,
+            debate,
         })
     } else {
         Err(p.0)
@@ -436,6 +505,66 @@ fn validate_quota(raw: &RawQuota, p: &mut Problems) -> Quota {
     }
 }
 
+/// Turns a debate setting into a count, or records why it is not one.
+fn count(key: &str, value: Option<i64>, p: &mut Problems) -> Option<u32> {
+    let v = value?;
+    let n = u32::try_from(v).ok();
+    if n.is_none() {
+        p.add(format!("{key}: must be a non-negative integer"));
+    }
+    n
+}
+
+fn validate_debate(raw: &RawDebate, p: &mut Problems) -> Debate {
+    let mut debate = Debate::default();
+    if let Some(max) = count("debate.max_turns_per_task", raw.max_turns_per_task, p) {
+        if max == 0 {
+            p.add("debate.max_turns_per_task: must be positive");
+        }
+        debate.max_turns_per_task = Some(max);
+    }
+    for &importance in Importance::ALL {
+        let Some(r) = raw.level(importance) else {
+            continue;
+        };
+        let key = format!("debate.{importance}");
+        let mut d = debate.depth(importance);
+        if let Some(n) = count(&format!("{key}.council_critics"), r.council_critics, p) {
+            d.council_critics = n;
+        }
+        if let Some(n) = count(&format!("{key}.council_rounds"), r.council_rounds, p) {
+            d.council_rounds = n;
+        }
+        if let Some(n) = count(&format!("{key}.review_rounds"), r.review_rounds, p) {
+            d.review_rounds = n;
+        }
+        for problem in d.problems() {
+            p.add(format!("{key}: {problem}"));
+        }
+        debate.set_depth(importance, d);
+    }
+    debate
+}
+
+/// The `[debate]` table for `debate`: only what differs from the defaults.
+fn encode_debate(debate: &Debate) -> RawDebate {
+    let mut raw = RawDebate {
+        max_turns_per_task: debate.max_turns_per_task.map(i64::from),
+        ..RawDebate::default()
+    };
+    for &importance in Importance::ALL {
+        let (d, table) = (debate.depth(importance), DebateDepth::table(importance));
+        if d != table {
+            *raw.level_mut(importance) = Some(RawDepth {
+                council_critics: Some(i64::from(d.council_critics)),
+                council_rounds: Some(i64::from(d.council_rounds)),
+                review_rounds: Some(i64::from(d.review_rounds)),
+            });
+        }
+    }
+    raw
+}
+
 pub(crate) fn encode(config: &Config) -> Result<String, Error> {
     let raw = RawConfig {
         pools: config
@@ -494,6 +623,7 @@ pub(crate) fn encode(config: &Config) -> Result<String, Error> {
                 .map(|(p, on)| (p.to_string(), *on))
                 .collect(),
         },
+        debate: encode_debate(&config.debate),
     };
     toml::to_string(&raw).map_err(|e| Error::Encode(e.to_string()))
 }
