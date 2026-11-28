@@ -773,3 +773,33 @@ where they name Go packages or types, read the matching crate (`internal/<x>` �
   now allows. A live Codex 0.172.0 turn (`exec --sandbox danger-full-access`) behaved the
   same. agy, the Codex app-server transport, and every live turn on Linux are still to
   be run.
+
+## D-037 — Planning: attempts with roles, planning as an active state, strict plans
+*2026-11-28 · R5.1*
+
+- **Context:** a pipeline task starts with a planner agent (§7.5 phase 1). Go stopped
+  before M5, so there is nothing to port. A planner, like the critics, reviewers,
+  arbiters and auditors of R5.2–R5.4, starts agent processes that must be recorded
+  before their first write (§5.1) and swept after a daemon crash, yet it works on no
+  step: `attempts` referenced `steps` by foreign key and allowed one running attempt per
+  step, and `planning` was not an active state, so the store refused sessions there.
+- **Options:** (a) a second table for non-implementing agent work, with sessions
+  referencing either; (b) attempts gain a `role`, task-level roles use step 0, the
+  foreign key to steps goes; (c) run planners unrecorded.
+- **Challenge:** (c) breaks the kill-the-daemon guarantee. (a) duplicates the attempt,
+  session, turn and recovery machinery, or makes `sessions` point at two tables. (b)
+  loses the database's check that an attempt's step exists; the store checks it in code
+  for step roles, and a `CHECK` ties step 0 to the task-level roles. Rebuilding a
+  referenced table in SQLite cascades unless foreign keys are off, so the migration
+  runner turns them off outside its transactions and runs `foreign_key_check` inside.
+- **Decision:** (b), migration 0003, one running attempt per (task, step, role).
+  `planning` is active; `planning → waiting_quota | needs_attention` and back, and
+  `awaiting_approval → planning` (replan). The planner's session is forced into `plan`
+  mode by the daemon while the task plans, so both the CLI and the approver's evaluator
+  refuse edits. The plan is structured output validated strictly by OpenChef (unknown
+  fields refused, 1–7 steps, relative paths inside the repository, explicit `null` for
+  no verification); one repair turn quotes every problem; a second failure parks the
+  task with the raw answer in the event log. Approval can edit the plan as JSON under
+  the same validation; `--yes` approves a valid plan at once.
+- **Consequences:** R5.2–R5.4 reuse the roles. Until R5.2 an approved pipeline ends
+  `done` after its last step.
