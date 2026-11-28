@@ -149,6 +149,16 @@ pub(crate) fn text(p: &PlanResult) -> String {
             let _w = writeln!(out, "     files: {}", s.files.join(", "));
         }
     }
+    let open: Vec<&openchef_api::FindingWire> = super::tasks::latest_findings(&p.findings, 0)
+        .into_iter()
+        .filter(|f| f.status == "open")
+        .collect();
+    if !open.is_empty() {
+        let _w = writeln!(out, "council findings still open (decide at approval):");
+        for f in open {
+            let _w = writeln!(out, "  {}", super::tasks::finding_line(f));
+        }
+    }
     if t.status == "awaiting_approval" {
         let _w = writeln!(
             out,

@@ -231,9 +231,12 @@ impl Store {
                     });
                 }
             }
+            // Critics work side by side, one attempt each (D-039); every other role has
+            // one running attempt per step.
             let running: i64 = tx.query_row(
-                "SELECT COUNT(*) FROM attempts WHERE task_id = ?1 AND step_idx = ?2 AND role = ?3 AND status = 'running'",
-                params![a.task_id.as_str(), a.step_index, a.role.as_str()],
+                "SELECT COUNT(*) FROM attempts WHERE task_id = ?1 AND step_idx = ?2 AND role = ?3 \
+                 AND status = 'running' AND (role <> 'council' OR agent = ?4)",
+                params![a.task_id.as_str(), a.step_index, a.role.as_str(), a.agent],
                 |r| r.get(0),
             )?;
             if running > 0 {

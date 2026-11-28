@@ -229,6 +229,43 @@ async fn create_pipeline_without_steps() {
     let _ = db.create_task(task, Vec::new()).await.unwrap();
 }
 
+/// Plan critics work side by side, one running attempt each (D-039); the planner and
+/// every step role keep one running attempt.
+#[tokio::test]
+async fn critics_run_side_by_side() {
+    use openchef_core::AttemptRole::{Council, Plan};
+    let db = open_domain().await;
+    let (mut task, _) = new_run_task();
+    task.kind = Kind::Pipeline;
+    task.status = TaskStatus::Planning;
+    let (task, _) = db.create_task(task, Vec::new()).await.unwrap();
+    let attempt = |role: openchef_core::AttemptRole, agent: &str| NewAttempt {
+        task_id: task.id.clone(),
+        step_index: 0,
+        role,
+        agent: agent.to_owned(),
+        runtime: "codex".to_owned(),
+        model: String::new(),
+        pool: format!("{agent}-pool"),
+    };
+    db.start_attempt(attempt(Plan, "opus")).await.unwrap();
+    assert!(
+        db.start_attempt(attempt(Plan, "gpt"))
+            .await
+            .unwrap_err()
+            .is_conflict()
+    );
+    db.start_attempt(attempt(Council, "gpt")).await.unwrap();
+    db.start_attempt(attempt(Council, "gem")).await.unwrap();
+    assert!(
+        db.start_attempt(attempt(Council, "gpt"))
+            .await
+            .unwrap_err()
+            .is_conflict(),
+        "one running attempt per critic"
+    );
+}
+
 #[tokio::test]
 async fn create_duplicate_id() {
     let db = open_domain().await;

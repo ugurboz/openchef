@@ -83,6 +83,32 @@ async fn findings_record_settle_and_list() {
             .await
             .is_err()
     );
+    // An arbiter's verdict moves disputed findings only.
+    let ruled = db
+        .resettle_findings(
+            &id,
+            1,
+            1,
+            vec![
+                ("F1".into(), Some("arbiter: the test covers it".into())),
+                ("F2".into(), None),
+            ],
+            "disputed",
+            "dismissed",
+        )
+        .await
+        .unwrap();
+    assert_eq!(ruled, 1, "F2 is a nit, not disputed");
+    let all = db.findings(&id).await.unwrap();
+    assert_eq!(
+        (all[0].status.as_str(), all[0].note.as_deref()),
+        ("dismissed", Some("arbiter: the test covers it"))
+    );
+    assert!(
+        db.resettle_findings(&id, 1, 1, Vec::new(), "disputed", "upheld")
+            .await
+            .is_err()
+    );
     // The plan council's findings live at step 0; an arbiter dismisses findings.
     let mut council = row("C1", "major", "dismissed");
     council.step_index = 0;

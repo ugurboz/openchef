@@ -54,8 +54,18 @@ impl<'w> Renderer<'w> {
                 EventKind::ReviewFinished if ev.status.as_deref() == Some("findings") => {
                     self.review(ev)
                 }
+                EventKind::CouncilFinished if ev.status.as_deref() == Some("findings") => {
+                    self.council(ev)
+                }
+                EventKind::ArbitrationFinished if ev.status.as_deref() == Some("ruled") => {
+                    self.arbitration(ev)
+                }
                 EventKind::ReviewStarted
                 | EventKind::ReviewFinished
+                | EventKind::CouncilStarted
+                | EventKind::CouncilFinished
+                | EventKind::ArbitrationStarted
+                | EventKind::ArbitrationFinished
                 | EventKind::StepStarted
                 | EventKind::AttemptStarted
                 | EventKind::Agent
@@ -112,6 +122,35 @@ impl<'w> Renderer<'w> {
                 ev.agent.as_deref().unwrap_or("")
             )),
             EventKind::ReviewFinished => self.review(ev),
+            EventKind::CouncilStarted => self.line(&format!(
+                "  ◇ plan critique by {} ({msg})",
+                ev.agent.as_deref().unwrap_or("")
+            )),
+            EventKind::CouncilFinished => self.council(ev),
+            EventKind::ArbitrationStarted => self.line(&format!(
+                "  ◇ arbiter {} rules on {msg}",
+                ev.agent.as_deref().unwrap_or("")
+            )),
+            EventKind::ArbitrationFinished => self.arbitration(ev),
+        }
+    }
+
+    /// The plan council's outcome.
+    fn council(&mut self, ev: &Event) -> io::Result<()> {
+        let msg = ev.message.as_deref().unwrap_or("");
+        match ev.status.as_deref().unwrap_or("") {
+            "locked" => self.line("  ◇ plan council: no blockers or majors"),
+            "skipped" => self.line(&format!("  ◇ plan council skipped: {msg}")),
+            _ => self.line(&format!("  ◇ plan council: {}", sanitize(msg))),
+        }
+    }
+
+    /// The arbiter's rulings, or why there were none.
+    fn arbitration(&mut self, ev: &Event) -> io::Result<()> {
+        let msg = ev.message.as_deref().unwrap_or("");
+        match ev.status.as_deref().unwrap_or("") {
+            "skipped" => self.line(&format!("  ◇ arbitration skipped: {msg}")),
+            _ => self.line(&format!("  ◇ arbiter: {}", sanitize(msg))),
         }
     }
 

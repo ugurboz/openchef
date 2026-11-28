@@ -328,33 +328,46 @@ fn write_detail(out: &mut dyn Write, d: &TaskDetail) -> std::io::Result<()> {
         )?;
     }
     write!(out, "prompt   {}\n\n", first_line(&t.prompt, 100))?;
+    // Step 0: the planner and the plan council.
+    let council = latest_findings(&d.findings, 0);
+    if !council.is_empty() || d.attempts.iter().any(|a| a.step == 0) {
+        writeln!(out, "plan")?;
+        write_attempts(out, d, 0)?;
+        write_findings(out, &council)?;
+    }
     for s in &d.steps {
         write!(out, "step {}  {:<8} {}", s.index, s.status, s.title)?;
         if let Some(commit) = &s.commit {
             write!(out, "  ({})", short_sha(commit))?;
         }
         writeln!(out)?;
-        for a in d.attempts.iter().filter(|a| a.step == s.index) {
-            write!(out, "  attempt {}  ", a.id)?;
-            if a.role != AttemptRole::Implement.as_str() {
-                write!(out, "{} ", a.role)?;
-            }
-            write!(out, "{} on {}: {}", a.agent, a.pool, a.status)?;
-            if let Some(outcome) = a.outcome.as_deref().filter(|o| !o.is_empty())
-                && a.status != AttemptStatus::Succeeded.as_str()
-            {
-                write!(out, " ({})", first_line(outcome, 80))?;
-            }
-            writeln!(out)?;
-        }
+        write_attempts(out, d, s.index)?;
         write_findings(out, &latest_findings(&d.findings, s.index))?;
+    }
+    Ok(())
+}
+
+/// The attempts at `step`, with their role unless they implement.
+fn write_attempts(out: &mut dyn Write, d: &TaskDetail, step: u32) -> std::io::Result<()> {
+    for a in d.attempts.iter().filter(|a| a.step == step) {
+        write!(out, "  attempt {}  ", a.id)?;
+        if a.role != AttemptRole::Implement.as_str() {
+            write!(out, "{} ", a.role)?;
+        }
+        write!(out, "{} on {}: {}", a.agent, a.pool, a.status)?;
+        if let Some(outcome) = a.outcome.as_deref().filter(|o| !o.is_empty())
+            && a.status != AttemptStatus::Succeeded.as_str()
+        {
+            write!(out, " ({})", first_line(outcome, 80))?;
+        }
+        writeln!(out)?;
     }
     Ok(())
 }
 
 /// Each finding of step `step` as its latest round left it: a finding the reviewer
 /// reports again in a later round keeps its id.
-fn latest_findings(all: &[FindingWire], step: u32) -> Vec<&FindingWire> {
+pub(crate) fn latest_findings(all: &[FindingWire], step: u32) -> Vec<&FindingWire> {
     let mut latest: Vec<&FindingWire> = Vec::new();
     for f in all.iter().filter(|f| f.step == step) {
         match latest.iter_mut().find(|l| l.id == f.id) {
@@ -366,13 +379,37 @@ fn latest_findings(all: &[FindingWire], step: u32) -> Vec<&FindingWire> {
     latest
 }
 
-/// The step's review outcome: a count per status, then every finding still needing a
-/// person (open or disputed); nits are only counted.
+/// One finding that still needs a person: status, id, severity, place, claim and the
+/// rebuttal or ruling, if any.
+pub(crate) fn finding_line(f: &FindingWire) -> String {
+    let place = match (&f.file, f.line, &f.contract) {
+        (Some(file), Some(line), _) => format!("{file}:{line}"),
+        (Some(file), None, _) => file.clone(),
+        (None, _, Some(contract)) => contract.clone(),
+        (None, _, None) => "-".to_owned(),
+    };
+    let note = f
+        .note
+        .as_deref()
+        .filter(|n| !n.is_empty())
+        .map_or_else(String::new, |n| format!(" ({})", first_line(n, 80)));
+    format!(
+        "{:<8} {} {:<7} {place}  {}{note}",
+        f.status,
+        f.id,
+        f.severity,
+        first_line(&f.claim, 80)
+    )
+}
+
+/// The outcome of a step's review (or, for step 0, the plan council): a count per
+/// status, then every finding still needing a person (open or disputed); nits are only
+/// counted.
 fn write_findings(out: &mut dyn Write, findings: &[&FindingWire]) -> std::io::Result<()> {
     if findings.is_empty() {
         return Ok(());
     }
-    let counts: Vec<String> = ["open", "disputed", "fixed", "nit"]
+    let counts: Vec<String> = ["open", "disputed", "dismissed", "fixed", "nit"]
         .into_iter()
         .filter_map(|status| {
             let n = findings.iter().filter(|f| f.status == status).count();
@@ -384,24 +421,7 @@ fn write_findings(out: &mut dyn Write, findings: &[&FindingWire]) -> std::io::Re
         .iter()
         .filter(|f| f.status == "open" || f.status == "disputed")
     {
-        let place = match (&f.file, f.line, &f.contract) {
-            (Some(file), Some(line), _) => format!("{file}:{line}"),
-            (Some(file), None, _) => file.clone(),
-            (None, _, Some(contract)) => contract.clone(),
-            (None, _, None) => "-".to_owned(),
-        };
-        write!(
-            out,
-            "    {:<8} {} {:<7} {place}  {}",
-            f.status,
-            f.id,
-            f.severity,
-            first_line(&f.claim, 80)
-        )?;
-        if let Some(note) = f.note.as_deref().filter(|n| !n.is_empty()) {
-            write!(out, " (rebuttal: {})", first_line(note, 60))?;
-        }
-        writeln!(out)?;
+        writeln!(out, "    {}", finding_line(f))?;
     }
     Ok(())
 }

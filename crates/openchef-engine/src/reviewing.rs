@@ -6,14 +6,31 @@
 use openchef_core::{Attempt, AttemptRole, AttemptStatus, TurnKind};
 use openchef_store::{FindingRow, NewAttempt};
 
+use crate::arbiter::Dispute;
 use crate::engine::{Error, Run};
 use crate::events::EventKind;
 use crate::prompts::retry_prompt;
 use crate::review::{self, Finding, Review, Severity};
-use crate::router::Agent;
+use crate::router::{Agent, Avoid};
 use crate::session::Live;
 use crate::step::AttemptEnd;
 use crate::turn::TurnEnd;
+
+/// Validates a judging agent's answer: its structured output, else its final text.
+pub(crate) type Parse<'p, T> =
+    &'p (dyn Fn(Option<&serde_json::Value>, &str) -> Result<T, Vec<String>> + Sync);
+
+/// How a judging agent's answer is asked for and checked.
+pub(crate) struct Judge<'p, T> {
+    /// What the answer is called in notices (`review`, `verdict`).
+    pub what: &'static str,
+    /// The structured output's JSON Schema.
+    pub schema: serde_json::Value,
+    /// Validates an answer (structured output, else the final text).
+    pub parse: Parse<'p, T>,
+    /// The repair turn's instructions for the problems found.
+    pub repair: fn(&[String]) -> String,
+}
 
 /// What one review round produced.
 enum Round {
@@ -46,6 +63,13 @@ impl Run<'_> {
         };
         let index = self.steps[i].index;
         let mut open: Vec<Finding> = Vec::new();
+        // Rebutted findings by round, for the arbiter; and what the arbiter must not share
+        // with the work it judges: the implementer and every reviewer.
+        let mut raised: Vec<(u32, Dispute)> = Vec::new();
+        let mut judged = Avoid {
+            runtimes: vec![agent.runtime.clone()],
+            pools: vec![agent.pool.clone()],
+        };
         for round in 1..=total {
             let (reviewer, review_attempt, found) =
                 match self.review_round(i, agent, round, &open).await? {
@@ -56,6 +80,8 @@ impl Run<'_> {
                         review,
                     } => (reviewer, attempt, review),
                 };
+            judged.runtimes.push(reviewer.runtime.clone());
+            judged.pools.push(reviewer.pool.clone());
             // Findings of the last round that are not reported again were fixed.
             let again: Vec<String> = found.findings.iter().map(|f| f.id.clone()).collect();
             let fixed: Vec<(String, Option<String>)> = open
@@ -77,41 +103,14 @@ impl Run<'_> {
             if blocking.is_empty() {
                 break;
             }
-            let Some(l) = live.as_mut() else {
-                return Err(Error::Session("the attempt has no session".into()));
-            };
-            let msg = review::fix_prompt(&reviewer.name, &blocking);
-            let answer = match self
-                .run_turn(l, a, agent, TurnKind::Retry, &msg, None)
-                .await?
-            {
-                TurnEnd::Completed(r) => r.final_text,
-                TurnEnd::Failed(_) | TurnEnd::Loop | TurnEnd::Stall(_) => {
-                    // The fix turn did not finish: whatever is in the worktree must still
-                    // pass verification before it is committed.
-                    self.notice(
-                        index,
-                        Some(a.id),
-                        "the fix turn did not complete; re-verifying",
-                    );
-                    String::new()
-                }
-            };
-            let rebutted = review::rebuttals(&answer);
-            let disputed: Vec<(String, Option<String>)> = rebutted
-                .iter()
-                .filter(|(id, _)| blocking.iter().any(|f| &f.id == id))
-                .map(|(id, why)| (id.clone(), Some(why.clone())))
-                .collect();
-            if !disputed.is_empty() {
-                self.store()
-                    .settle_findings(&self.task.id, index, round, disputed.clone(), "disputed")
-                    .await?;
-            }
+            let (answer, rebutted) = self
+                .fix_turn(i, a, agent, live, &reviewer.name, round, &blocking)
+                .await?;
             open = blocking
                 .into_iter()
-                .filter(|f| !disputed.iter().any(|(id, _)| id == &f.id))
+                .filter(|f| !rebutted.iter().any(|d| d.finding.id == f.id))
                 .collect();
+            raised.extend(rebutted.into_iter().map(|d| (round, d)));
             if !self.reverify(i, a, agent, live, retries).await? {
                 let reason = format!("step {index}: verification failed after review fixes");
                 return self.give_up(i, a, live.take(), &reason).await;
@@ -133,12 +132,77 @@ impl Run<'_> {
                 break; // everything blocking was rebutted: nothing left to review
             }
         }
+        if !raised.is_empty()
+            && !self
+                .arbitrate(i, a, agent, live, retries, &raised, &judged)
+                .await?
+        {
+            let reason = format!("step {index}: verification failed after the arbiter's fixes");
+            return self.give_up(i, a, live.take(), &reason).await;
+        }
         self.commit(i, a, agent).await
+    }
+
+    /// The implementer's fix turn for `blocking`: records the findings it rebuts as
+    /// `disputed` and returns its answer with those disputes.
+    #[allow(clippy::too_many_arguments, reason = "the step's attempt context")]
+    async fn fix_turn(
+        &self,
+        i: usize,
+        a: &Attempt,
+        agent: &Agent,
+        live: &mut Option<Live>,
+        reviewer: &str,
+        round: u32,
+        blocking: &[Finding],
+    ) -> Result<(String, Vec<Dispute>), Error> {
+        let index = self.steps[i].index;
+        let Some(l) = live.as_mut() else {
+            return Err(Error::Session("the attempt has no session".into()));
+        };
+        let msg = review::fix_prompt(reviewer, blocking);
+        let answer = match self
+            .run_turn(l, a, agent, TurnKind::Retry, &msg, None)
+            .await?
+        {
+            TurnEnd::Completed(r) => r.final_text,
+            TurnEnd::Failed(_) | TurnEnd::Loop | TurnEnd::Stall(_) => {
+                // The fix turn did not finish: whatever is in the worktree must still
+                // pass verification before it is committed.
+                self.notice(
+                    index,
+                    Some(a.id),
+                    "the fix turn did not complete; re-verifying",
+                );
+                String::new()
+            }
+        };
+        let rebutted: Vec<Dispute> = review::rebuttals(&answer)
+            .into_iter()
+            .filter_map(|(id, why)| {
+                let finding = blocking.iter().find(|f| f.id == id)?.clone();
+                Some(Dispute {
+                    finding,
+                    reviewer: reviewer.to_owned(),
+                    rebuttal: why,
+                })
+            })
+            .collect();
+        if !rebutted.is_empty() {
+            let ids = rebutted
+                .iter()
+                .map(|d| (d.finding.id.clone(), Some(d.rebuttal.clone())))
+                .collect();
+            self.store()
+                .settle_findings(&self.task.id, index, round, ids, "disputed")
+                .await?;
+        }
+        Ok((answer, rebutted))
     }
 
     /// Runs verification after a fix; failures get the usual retry turns (§7.2).
     /// `Ok(false)` when the retries are used up.
-    async fn reverify(
+    pub(crate) async fn reverify(
         &mut self,
         i: usize,
         a: &Attempt,
@@ -187,19 +251,17 @@ impl Run<'_> {
         open: &[Finding],
     ) -> Result<Round, Error> {
         let index = self.steps[i].index;
-        let reviewer =
-            match self
-                .e
-                .cfg
-                .router
-                .route_reviewer(&self.task, &self.steps[i], &implementer.runtime)
-            {
-                Ok(r) => r,
-                Err(no) => {
-                    self.review_finished(index, None, None, "skipped", &no.reason);
-                    return Ok(Round::Skipped);
-                }
-            };
+        let reviewer = match self.e.cfg.router.route_independent(
+            &self.task,
+            &self.steps[i],
+            &Avoid::runtimes([implementer.runtime.as_str()]),
+        ) {
+            Ok(r) => r,
+            Err(no) => {
+                self.review_finished(index, None, None, "skipped", &no.reason);
+                return Ok(Round::Skipped);
+            }
+        };
         let a = self
             .store()
             .start_attempt(NewAttempt {
@@ -261,7 +323,7 @@ impl Run<'_> {
 
     /// The review turn and its one repair turn. `Ok(Err(why))` when the review cannot be
     /// used; the step is never blocked by a reviewer that does not answer properly.
-    async fn review_turns(
+    pub(crate) async fn review_turns(
         &self,
         index: u32,
         a: &Attempt,
@@ -269,14 +331,35 @@ impl Run<'_> {
         prompt: &str,
         live: &mut Option<Live>,
     ) -> Result<Result<Review, String>, Error> {
-        let schema = review::schema();
+        let judge = Judge {
+            what: "review",
+            schema: review::schema(),
+            parse: &review::parse,
+            repair: review::repair_prompt,
+        };
+        self.judge_turns(index, a, reviewer, prompt, live, &judge)
+            .await
+    }
+
+    /// A judging agent's turn (reviewer, critic, arbiter) and its one repair turn, for
+    /// structured output validated by `judge.parse`. `Ok(Err(why))` when the answer
+    /// cannot be used; a judge never blocks the work it judges.
+    pub(crate) async fn judge_turns<T>(
+        &self,
+        index: u32,
+        a: &Attempt,
+        judge_agent: &Agent,
+        prompt: &str,
+        live: &mut Option<Live>,
+        judge: &Judge<'_, T>,
+    ) -> Result<Result<T, String>, Error> {
         let (mut kind, mut msg) = (TurnKind::Prompt, prompt.to_owned());
         for turn in 0..2 {
             let Some(l) = live.as_mut() else {
-                return Err(Error::Session("the review has no session".into()));
+                return Err(Error::Session(format!("the {} has no session", judge.what)));
             };
             let result = match self
-                .run_turn(l, a, reviewer, kind, &msg, Some(&schema))
+                .run_turn(l, a, judge_agent, kind, &msg, Some(&judge.schema))
                 .await?
             {
                 TurnEnd::Completed(r) => r,
@@ -284,44 +367,47 @@ impl Run<'_> {
                     if matches!(f.kind, openchef_runtime::FailureKind::QuotaExhausted)
                         && let Some(cb) = &self.e.cfg.pool_exhausted
                     {
-                        cb(&reviewer.pool, f.resets_at);
+                        cb(&judge_agent.pool, f.resets_at);
                     }
                     return Ok(Err(format!(
-                        "reviewer {} failed ({}): {}",
-                        reviewer.name,
+                        "{} {} failed ({}): {}",
+                        judge.what,
+                        judge_agent.name,
                         f.kind.as_str(),
                         f.message
                     )));
                 }
                 TurnEnd::Loop | TurnEnd::Stall(_) => {
                     return Ok(Err(format!(
-                        "reviewer {} stopped making progress",
-                        reviewer.name
+                        "{} {} stopped making progress",
+                        judge.what, judge_agent.name
                     )));
                 }
             };
-            match review::parse(result.structured.as_ref(), &result.final_text) {
+            match (judge.parse)(result.structured.as_ref(), &result.final_text) {
                 Ok(r) => return Ok(Ok(r)),
                 Err(problems) if turn == 0 => {
                     self.notice(
                         index,
                         Some(a.id),
                         format!(
-                            "the review is not valid; asking once to repair it: {}",
+                            "the {} is not valid; asking once to repair it: {}",
+                            judge.what,
                             problems.join("; ")
                         ),
                     );
-                    (kind, msg) = (TurnKind::Retry, review::repair_prompt(&problems));
+                    (kind, msg) = (TurnKind::Retry, (judge.repair)(&problems));
                 }
                 Err(problems) => {
                     return Ok(Err(format!(
-                        "the review is still not valid: {}",
+                        "the {} is still not valid: {}",
+                        judge.what,
                         problems.join("; ")
                     )));
                 }
             }
         }
-        Ok(Err("the review ended without an answer".into()))
+        Ok(Err(format!("the {} ended without an answer", judge.what)))
     }
 
     /// Publishes a review's outcome: clean, or the first blocking findings.
@@ -357,32 +443,14 @@ impl Run<'_> {
 
     /// Stores a round's findings: blockers and majors open, nits as nits.
     async fn record(&self, i: usize, round: u32, attempt: i64, r: &Review) -> Result<(), Error> {
-        let rows = r
-            .findings
-            .iter()
-            .map(|f| FindingRow {
-                id: 0,
-                task_id: self.task.id.clone(),
-                step_index: self.steps[i].index,
-                round,
-                attempt_id: Some(attempt),
-                finding: f.id.clone(),
-                severity: f.severity.as_str().to_owned(),
-                file: f.file.clone(),
-                line: f.line,
-                contract: f.contract.clone(),
-                claim: f.claim.clone(),
-                evidence: f.evidence.clone(),
-                fix: f.fix.clone(),
-                status: if f.severity == Severity::Nit {
-                    "nit"
-                } else {
-                    "open"
-                }
-                .to_owned(),
-                note: None,
-            })
-            .collect();
+        let rows = finding_rows(
+            &self.task.id,
+            self.steps[i].index,
+            round,
+            attempt,
+            &r.findings,
+            None,
+        );
         Ok(self.store().record_findings(rows).await?)
     }
 
@@ -402,4 +470,41 @@ impl Run<'_> {
         ev.message = Some(message.to_owned());
         self.publish(ev);
     }
+}
+
+/// A round's findings as store rows: blockers and majors open, nits as nits. `prefix`
+/// keeps the ids of several critics in one round apart (`gpt/F1`).
+pub(crate) fn finding_rows(
+    task: &openchef_core::TaskId,
+    step: u32,
+    round: u32,
+    attempt: i64,
+    findings: &[Finding],
+    prefix: Option<&str>,
+) -> Vec<FindingRow> {
+    findings
+        .iter()
+        .map(|f| FindingRow {
+            id: 0,
+            task_id: task.clone(),
+            step_index: step,
+            round,
+            attempt_id: Some(attempt),
+            finding: prefix.map_or_else(|| f.id.clone(), |p| format!("{p}/{}", f.id)),
+            severity: f.severity.as_str().to_owned(),
+            file: f.file.clone(),
+            line: f.line,
+            contract: f.contract.clone(),
+            claim: f.claim.clone(),
+            evidence: f.evidence.clone(),
+            fix: f.fix.clone(),
+            status: if f.severity == Severity::Nit {
+                "nit"
+            } else {
+                "open"
+            }
+            .to_owned(),
+            note: None,
+        })
+        .collect()
 }

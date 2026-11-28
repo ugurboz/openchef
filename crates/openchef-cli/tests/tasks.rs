@@ -1079,3 +1079,45 @@ fn status_shows_review_findings() {
         "{json_out}"
     );
 }
+
+/// R5.3 acceptance: a planner proposing a `high` step gets a critic of another provider;
+/// what the critic still reports after the last round is listed next to the plan and in
+/// `status <task>`.
+#[test]
+fn plan_shows_open_council_findings() {
+    let e = CliEnv::with_reviewer();
+    let codex = e.codex.clone().unwrap();
+    let high = || {
+        json!({"title": "Goal", "steps": [{"title": "risky", "prompt": "Do it", "files": ["out.txt"],
+            "verify": null, "size": "small", "importance": "high", "reason": "r"}]})
+        .to_string()
+    };
+    e.claude
+        .push([Turn::completed(high()), Turn::completed(high())]);
+    let blocker = || {
+        Turn::completed(
+            json!({"findings": [{"id": "F1", "severity": "blocker", "contract": "step 1",
+                "claim": "no rollback step", "evidence": "the plan", "fix": "add one"}]})
+            .to_string(),
+        )
+    };
+    codex.push([blocker(), blocker()]);
+    let (code, out, err) = e.cli(&["pipeline", "-q", "risky change"]);
+    assert_eq!(code, exit::OK, "{err}\n{out}");
+    let id = task_id_from(&out);
+    let (code, shown, err) = e.cli(&["plan", &id]);
+    assert_eq!(code, exit::OK, "{err}");
+    for want in [
+        "council findings still open (decide at approval):",
+        "open     gpt/F1 blocker step 1  no rollback step",
+    ] {
+        assert!(shown.contains(want), "plan lacks {want:?}:\n{shown}");
+    }
+    let (_, detail, _) = e.cli(&["status", &id]);
+    assert!(
+        detail.contains("plan\n  attempt")
+            && detail.contains("  findings 1 open")
+            && detail.contains("council gpt on chatgpt-plus: succeeded"),
+        "status:\n{detail}"
+    );
+}

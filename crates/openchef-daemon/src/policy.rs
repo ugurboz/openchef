@@ -215,7 +215,7 @@ pub(crate) mod tests {
         );
     }
 
-    /// Planners, critics and reviewers read only: their sessions run in `plan` mode
+    /// Planners, critics, reviewers, arbiters and auditors read only: their sessions run in `plan` mode
     /// whatever the task's mode, so the evaluator refuses their edits (D-037).
     #[test]
     fn reading_roles_run_in_plan_mode() {
@@ -236,6 +236,9 @@ pub(crate) mod tests {
         for role in [
             openchef_core::AttemptRole::Plan,
             openchef_core::AttemptRole::Review,
+            openchef_core::AttemptRole::Council,
+            openchef_core::AttemptRole::Arbiter,
+            openchef_core::AttemptRole::Audit,
         ] {
             let p = pols.session(&t, role).unwrap_or_else(|e| panic!("{e}"));
             assert_eq!(p.mode, PermissionMode::Plan, "{role}");

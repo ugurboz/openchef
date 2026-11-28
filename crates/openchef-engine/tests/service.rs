@@ -54,6 +54,8 @@ struct Env {
     store: Store,
     claude: FakeRuntime,
     codex: FakeRuntime,
+    /// A third provider; only [`Env::three_providers`] routes to it.
+    agy: FakeRuntime,
 }
 
 fn git(dir: &Path, args: &[&str]) {
@@ -89,6 +91,7 @@ async fn env() -> Env {
         store,
         claude: FakeRuntime::new("claude", []),
         codex: FakeRuntime::new("codex", []),
+        agy: FakeRuntime::new("agy", []),
     }
 }
 
@@ -111,6 +114,10 @@ impl Env {
         runtimes.insert(
             "codex".into(),
             Arc::new(self.codex.clone()) as Arc<dyn DynRuntime>,
+        );
+        runtimes.insert(
+            "agy".into(),
+            Arc::new(self.agy.clone()) as Arc<dyn DynRuntime>,
         );
         let router = Arc::new(Ordered {
             agents: vec![
@@ -175,6 +182,28 @@ impl Env {
 
     fn service(&self) -> Service {
         self.service_with(None)
+    }
+
+    /// A service whose router also has `gem` on agy (pool `gemini`): a third provider for
+    /// a second critic or an arbiter.
+    fn three_providers(&self) -> Service {
+        self.service_deps(|d| {
+            let agent = |name: &str, runtime: &str, pool: &str| Agent {
+                name: name.into(),
+                runtime: runtime.into(),
+                model: None,
+                pool: pool.into(),
+                effort: None,
+            };
+            d.engine.router = Arc::new(Ordered {
+                agents: vec![
+                    agent("opus", "claude", "claude-max"),
+                    agent("gpt", "codex", "chatgpt-plus"),
+                    agent("gem", "agy", "gemini"),
+                ],
+                cooldown: None,
+            });
+        })
     }
 
     async fn wait_status(&self, id: &TaskId, status: TaskStatus) -> Task {
@@ -1193,8 +1222,311 @@ async fn review_needs_another_provider() {
             .message
             .as_deref()
             .unwrap_or_default()
-            .contains("another provider"),
+            .contains("outside providers claude"),
         "{skipped:?}"
+    );
+    stop(&s).await;
+}
+
+/// A one-step plan document of `importance` titled `title`.
+fn plan_doc(importance: &str, title: &str) -> String {
+    serde_json::json!({"title": "T", "steps": [{"title": title, "prompt": "write out.txt",
+        "files": ["out.txt"], "verify": "git --version", "size": "small", "importance": importance,
+        "reason": "r"}]})
+    .to_string()
+}
+
+/// A critic's answer with findings `(id, severity, contract)`.
+fn council_answer(findings: &[(&str, &str, Option<&str>)]) -> String {
+    let f: Vec<serde_json::Value> = findings
+        .iter()
+        .map(|(id, sev, contract)| {
+            serde_json::json!({"id": id, "severity": sev, "file": null, "line": null,
+                "contract": contract, "claim": format!("{id}: the plan misses it"),
+                "evidence": "see the plan", "fix": "add it"})
+        })
+        .collect();
+    serde_json::json!({ "findings": f }).to_string()
+}
+
+/// `(finding, status)` of a step's findings in store order.
+async fn statuses(e: &Env, id: &TaskId, step: u32) -> Vec<(String, String)> {
+    e.store
+        .findings(id)
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|f| f.step_index == step)
+        .map(|f| (f.finding, f.status))
+        .collect()
+}
+
+/// The kinds and statuses of a task's past events of `kind`.
+async fn events_of(s: &Service, id: &TaskId, kind: EventKind) -> Vec<Event> {
+    let (past, sub) = s.watch(id, true).await.unwrap();
+    s.unwatch(&sub);
+    past.into_iter().filter(|ev| ev.kind == kind).collect()
+}
+
+/// R5.3: a `high` plan gets one critic of another provider; its blocker makes the
+/// planner revise in the same session; the second critique is clean, so the plan
+/// awaits approval with the finding fixed.
+#[tokio::test(flavor = "multi_thread")]
+async fn council_revises_a_high_plan() {
+    let e = env().await;
+    let s = e.service();
+    e.claude.push([
+        Turn::completed(plan_doc("high", "first")),
+        Turn::completed(plan_doc("high", "revised")),
+    ]);
+    e.codex.push([
+        Turn::completed(council_answer(&[("F1", "blocker", Some("step 1"))])),
+        Turn::completed(council_answer(&[])),
+    ]);
+    let mut req = e.run("plan carefully");
+    req.importance = Some("high".parse().unwrap());
+    let t = s.pipeline(req, false).await.unwrap();
+    e.wait_status(&t.id, TaskStatus::AwaitingApproval).await;
+    let claude = e.claude.turns();
+    assert!(
+        claude.len() == 2
+            && claude[1].contains("gpt/F1")
+            && claude[1].contains("whole revised plan"),
+        "{claude:?}"
+    );
+    let critic = e.codex.turns();
+    assert!(
+        critic[1].contains("Your findings of the previous round"),
+        "{critic:?}"
+    );
+    let sessions = e
+        .codex
+        .calls()
+        .iter()
+        .filter(|c| c.kind == openchef_fake::CallKind::Open)
+        .count();
+    assert_eq!(sessions, 1, "the critic keeps its session across rounds");
+    let steps = e.store.steps(&t.id).await.unwrap();
+    assert_eq!(steps[0].title, "revised", "the revision is the stored plan");
+    assert_eq!(
+        statuses(&e, &t.id, 0).await,
+        [("gpt/F1".to_owned(), "fixed".to_owned())]
+    );
+    let council = e
+        .store
+        .attempts(&t.id)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|a| a.role == openchef_core::AttemptRole::Council)
+        .unwrap();
+    assert_eq!(
+        (council.agent.as_str(), council.step_index, council.status),
+        ("gpt", 0, openchef_core::AttemptStatus::Succeeded)
+    );
+    let done = events_of(&s, &t.id, EventKind::CouncilFinished).await;
+    assert_eq!(done.last().unwrap().status.as_deref(), Some("locked"));
+    stop(&s).await;
+}
+
+/// A `critical` plan gets two critics on two other providers and at most three rounds;
+/// what they still report after the last round stays open for approval.
+#[tokio::test(flavor = "multi_thread")]
+async fn council_round_limit_leaves_findings_for_approval() {
+    let e = env().await;
+    let s = e.three_providers();
+    e.claude.push([
+        Turn::completed(plan_doc("critical", "v1")),
+        Turn::completed(plan_doc("critical", "v2")),
+        Turn::completed(plan_doc("critical", "v3")),
+    ]);
+    let blocker = || Turn::completed(council_answer(&[("F1", "major", Some("step 1"))]));
+    e.codex.push([blocker(), blocker(), blocker()]);
+    e.agy.push([
+        Turn::completed(council_answer(&[("F1", "nit", None)])),
+        Turn::completed(council_answer(&[])),
+        Turn::completed(council_answer(&[])),
+    ]);
+    let mut req = e.run("critical change");
+    req.importance = Some("critical".parse().unwrap());
+    let t = s.pipeline(req, false).await.unwrap();
+    e.wait_status(&t.id, TaskStatus::AwaitingApproval).await;
+    assert_eq!((e.codex.turns().len(), e.agy.turns().len()), (3, 3));
+    assert_eq!(
+        e.claude.turns().len(),
+        3,
+        "a plan and two revisions; the last round is not revised"
+    );
+    assert_eq!(e.store.steps(&t.id).await.unwrap()[0].title, "v3");
+    let last: Vec<(String, String)> = e
+        .store
+        .findings(&t.id)
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|f| f.round == 3 && f.status == "open")
+        .map(|f| (f.finding, f.severity))
+        .collect();
+    assert_eq!(last, [("gpt/F1".to_owned(), "major".to_owned())]);
+    let done = events_of(&s, &t.id, EventKind::CouncilFinished).await;
+    assert_eq!(done.last().unwrap().status.as_deref(), Some("findings"));
+    stop(&s).await;
+}
+
+/// A critic that never answers validly is dropped, and a revision that stays invalid
+/// keeps the last valid plan: the council never blocks approval.
+#[tokio::test(flavor = "multi_thread")]
+async fn council_failures_never_block_approval() {
+    let e = env().await;
+    let s = e.service();
+    e.claude.push([Turn::completed(plan_doc("high", "kept"))]);
+    e.codex
+        .push([Turn::completed("fine"), Turn::completed("still fine")]);
+    let mut req = e.run("p");
+    req.importance = Some("high".parse().unwrap());
+    let t = s.pipeline(req, false).await.unwrap();
+    e.wait_status(&t.id, TaskStatus::AwaitingApproval).await;
+    let done = events_of(&s, &t.id, EventKind::CouncilFinished).await;
+    assert_eq!(done.last().unwrap().status.as_deref(), Some("skipped"));
+
+    e.claude.push([
+        Turn::completed(plan_doc("high", "kept")),
+        Turn::completed("not a plan"),
+        Turn::completed("still not a plan"),
+    ]);
+    e.codex.push([Turn::completed(council_answer(&[(
+        "F1",
+        "blocker",
+        Some("step 1"),
+    )]))]);
+    let mut req = e.run("q");
+    req.importance = Some("high".parse().unwrap());
+    let t = s.pipeline(req, false).await.unwrap();
+    e.wait_status(&t.id, TaskStatus::AwaitingApproval).await;
+    assert_eq!(e.store.steps(&t.id).await.unwrap()[0].title, "kept");
+    assert_eq!(
+        statuses(&e, &t.id, 0).await,
+        [("gpt/F1".to_owned(), "open".to_owned())]
+    );
+    stop(&s).await;
+}
+
+/// R5.3: a rebutted blocker goes to an arbiter on a third pool. Upheld: one fix turn
+/// without rebuttals, re-verified, fixed on the FIXED claim. Dismissed: `dismissed`.
+#[tokio::test(flavor = "multi_thread")]
+async fn arbiter_rules_on_rebuttals() {
+    let e = env().await;
+    let s = e.three_providers();
+    let id = approved_pipeline(&e, &s, "normal").await;
+    e.claude.push([
+        Turn::editing("done", write_file),
+        Turn::completed("REBUT F1: not a bug\nREBUT F2: covered"),
+        Turn::completed("FIXED F1"),
+    ]);
+    e.codex.push([Turn::completed(review_answer(&[
+        ("F1", "blocker", Some("out.txt")),
+        ("F2", "major", Some("out.txt")),
+    ]))]);
+    e.agy.push([Turn::completed(
+        serde_json::json!({"verdicts": [
+            {"id": "F1", "verdict": "uphold", "reason": "the file is empty"},
+            {"id": "F2", "verdict": "dismiss", "reason": "the test covers it"}
+        ]})
+        .to_string(),
+    )]);
+    let _a = s.approve(&id).await.unwrap();
+    e.wait_status(&id, TaskStatus::Done).await;
+    let fix = e.claude.turns().last().unwrap().clone();
+    assert!(
+        fix.contains("arbiter (gem) upheld") && fix.contains("can no longer be rebutted"),
+        "{fix}"
+    );
+    let found = e.store.findings(&id).await.unwrap();
+    let got: Vec<(&str, &str)> = found
+        .iter()
+        .map(|f| (f.finding.as_str(), f.status.as_str()))
+        .collect();
+    assert_eq!(got, [("F1", "fixed"), ("F2", "dismissed")]);
+    assert!(
+        found[1]
+            .note
+            .as_deref()
+            .unwrap_or_default()
+            .contains("arbiter: the test covers it"),
+        "{found:?}"
+    );
+    let arbiter = e
+        .store
+        .attempts(&id)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|a| a.role == openchef_core::AttemptRole::Arbiter)
+        .unwrap();
+    assert_eq!(
+        (arbiter.agent.as_str(), arbiter.pool.as_str()),
+        ("gem", "gemini")
+    );
+    stop(&s).await;
+}
+
+/// No third pool leaves rebutted findings disputed, said so; invalid verdicts get one
+/// repair turn, then the findings stay disputed too.
+#[tokio::test(flavor = "multi_thread")]
+async fn arbiter_absent_or_invalid_leaves_disputes() {
+    let e = env().await;
+    let s = e.service();
+    let id = approved_pipeline(&e, &s, "normal").await;
+    e.claude.push([
+        Turn::editing("done", write_file),
+        Turn::completed("REBUT F1: not a bug"),
+    ]);
+    e.codex.push([Turn::completed(review_answer(&[(
+        "F1",
+        "blocker",
+        Some("out.txt"),
+    )]))]);
+    let _a = s.approve(&id).await.unwrap();
+    e.wait_status(&id, TaskStatus::Done).await;
+    let skipped = events_of(&s, &id, EventKind::ArbitrationFinished).await;
+    assert!(
+        skipped[0].status.as_deref() == Some("skipped")
+            && skipped[0]
+                .message
+                .as_deref()
+                .unwrap_or_default()
+                .contains("third pool"),
+        "{skipped:?}"
+    );
+    assert_eq!(
+        statuses(&e, &id, 1).await,
+        [("F1".to_owned(), "disputed".to_owned())]
+    );
+    stop(&s).await;
+
+    let s = e.three_providers();
+    let id = approved_pipeline(&e, &s, "normal").await;
+    e.claude.push([
+        Turn::editing("done", write_file),
+        Turn::completed("REBUT F1: not a bug"),
+    ]);
+    e.codex.push([Turn::completed(review_answer(&[(
+        "F1",
+        "blocker",
+        Some("out.txt"),
+    )]))]);
+    e.agy
+        .push([Turn::completed("uphold"), Turn::completed("I said uphold")]);
+    let _a = s.approve(&id).await.unwrap();
+    e.wait_status(&id, TaskStatus::Done).await;
+    let agy = e.agy.turns();
+    assert!(
+        agy.len() == 2 && agy[1].contains("verdicts are not valid"),
+        "{agy:?}"
+    );
+    assert_eq!(
+        statuses(&e, &id, 1).await,
+        [("F1".to_owned(), "disputed".to_owned())]
     );
     stop(&s).await;
 }

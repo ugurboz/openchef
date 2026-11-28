@@ -68,7 +68,14 @@ impl Run<'_> {
                 return self.planning_failed(&a, None, &why).await.map(|()| false);
             }
         };
-        let planned = self.planning_turns(&a, &agent, &mut live).await;
+        let planned = match self.planning_turns(&a, &agent, &mut live).await {
+            // The council runs while the planner's session is open: it revises there.
+            Ok(Planned::Plan(p)) => self
+                .council(&a, &agent, &mut live, p)
+                .await
+                .map(Planned::Plan),
+            other => other,
+        };
         self.close_quietly(live, 0, a.id).await;
         match planned? {
             Planned::Parked => Ok(false),
@@ -77,7 +84,7 @@ impl Run<'_> {
     }
 
     /// The routing request for the planner: the task's importance, no files.
-    fn planning_step(&self) -> Step {
+    pub(crate) fn planning_step(&self) -> Step {
         Step {
             task_id: self.task.id.clone(),
             index: 0,
@@ -93,15 +100,16 @@ impl Run<'_> {
         }
     }
 
-    /// Ends whatever a previous daemon left of a planning attempt; planning starts again
-    /// in a new conversation (a plan is cheap to redo and has no partial work to keep).
+    /// Ends whatever a previous daemon left of planning (the planner's and the critics'
+    /// attempts at step 0); planning starts again in a new conversation (a plan is cheap
+    /// to redo and has no partial work to keep).
     async fn settle_planning(&self) -> Result<(), Error> {
         let left: Vec<Attempt> = self
             .store()
             .attempts(&self.task.id)
             .await?
             .into_iter()
-            .filter(|a| a.role == AttemptRole::Plan && a.status == AttemptStatus::Running)
+            .filter(|a| a.step_index == 0 && a.status == AttemptStatus::Running)
             .collect();
         for a in left {
             drop(self.settle(&a).await?);
@@ -109,7 +117,7 @@ impl Run<'_> {
                 .end_attempt(
                     a.id,
                     AttemptStatus::Interrupted,
-                    "daemon restart while planning",
+                    &format!("daemon restart while planning ({})", a.role),
                 )
                 .await?;
         }

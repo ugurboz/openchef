@@ -53,6 +53,9 @@ pub struct PlanResult {
     pub task: TaskWire,
     /// Its plan; empty steps while it is still being planned.
     pub plan: Plan,
+    /// The plan council's findings (step 0), every round; older daemons send none.
+    #[serde(default)]
+    pub findings: Vec<crate::FindingWire>,
 }
 
 impl Client {

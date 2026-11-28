@@ -162,7 +162,7 @@ impl Run<'_> {
                     .end_attempt(
                         a.id,
                         AttemptStatus::Interrupted,
-                        "daemon restart during review",
+                        &format!("daemon restart during {}", a.role),
                     )
                     .await?;
             }
