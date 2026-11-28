@@ -4,11 +4,11 @@ use std::io::Write;
 
 use anyhow::Context as _;
 use openchef_api::{
-    Client, ListParams, NOTIFY_EVENT, NOTIFY_WATCH_ENDED, PipelineParams, RunParams, TaskDetail,
-    TaskWire, WatchEnded, WatchParams, finished, friendly,
+    Client, FindingWire, ListParams, NOTIFY_EVENT, NOTIFY_WATCH_ENDED, PipelineParams, RunParams,
+    TaskDetail, TaskWire, WatchEnded, WatchParams, finished, friendly,
 };
 use openchef_config::Paths;
-use openchef_core::{AttemptStatus, TaskStatus};
+use openchef_core::{AttemptRole, AttemptStatus, TaskStatus};
 use openchef_engine::{Event, EventKind};
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
@@ -335,11 +335,11 @@ fn write_detail(out: &mut dyn Write, d: &TaskDetail) -> std::io::Result<()> {
         }
         writeln!(out)?;
         for a in d.attempts.iter().filter(|a| a.step == s.index) {
-            write!(
-                out,
-                "  attempt {}  {} on {}: {}",
-                a.id, a.agent, a.pool, a.status
-            )?;
+            write!(out, "  attempt {}  ", a.id)?;
+            if a.role != AttemptRole::Implement.as_str() {
+                write!(out, "{} ", a.role)?;
+            }
+            write!(out, "{} on {}: {}", a.agent, a.pool, a.status)?;
             if let Some(outcome) = a.outcome.as_deref().filter(|o| !o.is_empty())
                 && a.status != AttemptStatus::Succeeded.as_str()
             {
@@ -347,6 +347,61 @@ fn write_detail(out: &mut dyn Write, d: &TaskDetail) -> std::io::Result<()> {
             }
             writeln!(out)?;
         }
+        write_findings(out, &latest_findings(&d.findings, s.index))?;
+    }
+    Ok(())
+}
+
+/// Each finding of step `step` as its latest round left it: a finding the reviewer
+/// reports again in a later round keeps its id.
+fn latest_findings(all: &[FindingWire], step: u32) -> Vec<&FindingWire> {
+    let mut latest: Vec<&FindingWire> = Vec::new();
+    for f in all.iter().filter(|f| f.step == step) {
+        match latest.iter_mut().find(|l| l.id == f.id) {
+            Some(l) if f.round >= l.round => *l = f,
+            Some(_) => {}
+            None => latest.push(f),
+        }
+    }
+    latest
+}
+
+/// The step's review outcome: a count per status, then every finding still needing a
+/// person (open or disputed); nits are only counted.
+fn write_findings(out: &mut dyn Write, findings: &[&FindingWire]) -> std::io::Result<()> {
+    if findings.is_empty() {
+        return Ok(());
+    }
+    let counts: Vec<String> = ["open", "disputed", "fixed", "nit"]
+        .into_iter()
+        .filter_map(|status| {
+            let n = findings.iter().filter(|f| f.status == status).count();
+            (n > 0).then(|| format!("{n} {status}"))
+        })
+        .collect();
+    writeln!(out, "  findings {}", counts.join(", "))?;
+    for f in findings
+        .iter()
+        .filter(|f| f.status == "open" || f.status == "disputed")
+    {
+        let place = match (&f.file, f.line, &f.contract) {
+            (Some(file), Some(line), _) => format!("{file}:{line}"),
+            (Some(file), None, _) => file.clone(),
+            (None, _, Some(contract)) => contract.clone(),
+            (None, _, None) => "-".to_owned(),
+        };
+        write!(
+            out,
+            "    {:<8} {} {:<7} {place}  {}",
+            f.status,
+            f.id,
+            f.severity,
+            first_line(&f.claim, 80)
+        )?;
+        if let Some(note) = f.note.as_deref().filter(|n| !n.is_empty()) {
+            write!(out, " (rebuttal: {})", first_line(note, 60))?;
+        }
+        writeln!(out)?;
     }
     Ok(())
 }

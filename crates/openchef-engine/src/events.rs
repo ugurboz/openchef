@@ -33,6 +33,11 @@ pub enum EventKind {
     ApprovalRequested,
     /// `agent`, `approval`: a request was settled.
     ApprovalDecided,
+    /// `step`, `attempt`, `agent` (the reviewer), `message` (the round).
+    ReviewStarted,
+    /// `step`, `attempt`, `agent`, `status` (`clean`, `findings`, `skipped`), `message`
+    /// (the counts or why it was skipped).
+    ReviewFinished,
 }
 
 impl EventKind {
@@ -51,6 +56,8 @@ impl EventKind {
             Self::Notice => "notice",
             Self::ApprovalRequested => "approval_requested",
             Self::ApprovalDecided => "approval_decided",
+            Self::ReviewStarted => "review_started",
+            Self::ReviewFinished => "review_finished",
         }
     }
 }

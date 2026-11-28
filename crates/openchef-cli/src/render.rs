@@ -50,7 +50,13 @@ impl<'w> Renderer<'w> {
                 EventKind::TaskStatus => self.status(ev),
                 EventKind::ApprovalRequested => self.approval(ev, true),
                 EventKind::ApprovalDecided => self.approval(ev, false),
-                EventKind::StepStarted
+                // A review that leaves findings matters to the user even in quiet mode.
+                EventKind::ReviewFinished if ev.status.as_deref() == Some("findings") => {
+                    self.review(ev)
+                }
+                EventKind::ReviewStarted
+                | EventKind::ReviewFinished
+                | EventKind::StepStarted
                 | EventKind::AttemptStarted
                 | EventKind::Agent
                 | EventKind::VerifyStarted
@@ -101,6 +107,21 @@ impl<'w> Renderer<'w> {
             EventKind::Notice => self.line(&format!("  · {msg}")),
             EventKind::ApprovalRequested => self.approval(ev, true),
             EventKind::ApprovalDecided => self.approval(ev, false),
+            EventKind::ReviewStarted => self.line(&format!(
+                "  ◇ review by {} ({msg})",
+                ev.agent.as_deref().unwrap_or("")
+            )),
+            EventKind::ReviewFinished => self.review(ev),
+        }
+    }
+
+    /// A review's outcome: clean, its findings, or why it was skipped.
+    fn review(&mut self, ev: &Event) -> io::Result<()> {
+        let msg = ev.message.as_deref().unwrap_or("");
+        match ev.status.as_deref().unwrap_or("") {
+            "clean" => self.line("  ◇ review: no blockers or majors"),
+            "skipped" => self.line(&format!("  ◇ review skipped: {msg}")),
+            _ => self.line(&format!("  ◇ review: {}", sanitize(msg))),
         }
     }
 

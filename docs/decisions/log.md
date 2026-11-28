@@ -803,3 +803,39 @@ where they name Go packages or types, read the matching crate (`internal/<x>` �
   the same validation; `--yes` approves a valid plan at once.
 - **Consequences:** R5.2–R5.4 reuse the roles. Until R5.2 an approved pipeline ends
   `done` after its last step.
+
+## D-038 — Review loop: another provider, located findings, bounded fix rounds
+*2026-11-28 · R5.2*
+
+- **Context:** after a pipeline step passes verification, a reviewer reads its diff and
+  the implementer fixes what it finds (§7.5 phase 4). Go stopped before M5; nothing to
+  port. The loop must catch real defects without turning into an endless, expensive
+  argument, and most users are on Pro plans (D-029: frugal by default).
+- **Options:** (a) review with the implementer's own provider in a fresh session;
+  (b) a reviewer of another provider, findings as free text; (c) another provider,
+  schema-validated findings, only located ones cost a turn, a fixed round budget.
+- **Challenge:** (a) shares the implementer's blind spots. (b) cannot be counted,
+  settled or reported, and any vague remark would cost a fix turn. (c) can miss a real
+  but unlocated concern (it is kept as a nit, shown, not acted on), and with no review
+  left after the last fix round, that round's fixes are unconfirmed.
+- **Decision:** (c). Review runs for pipelines only; a single-step `run` stays the fast
+  path. Rounds are fix rounds from the step's importance with the task's as the floor:
+  low 0, normal 1, high 2, critical 3; the reviewer's minimum tier also follows the
+  importance, never downgraded. Each round is a new `review` attempt and session (fresh
+  eyes) in `plan` mode on an agent whose runtime differs from the implementer's; none
+  available, or an answer invalid after one repair turn, skips the review with a
+  recorded `review_finished: skipped` and never blocks the step. A blocker or major
+  with neither a file nor a contract becomes a nit. Blockers and majors go to the
+  implementer's open session, which answers `FIXED <id>` or `REBUT <id>: <evidence>`;
+  a rebuttal makes the finding `disputed` (the R5.3 arbiter settles it) and costs no
+  further turn. Every fix is re-verified under §7.2's retry budget. A finding from
+  round n that round n+1 does not report again is `fixed`; in the last round the
+  implementer's `FIXED` claims are taken, the rest stay `open` for the report. The
+  `findings` table keeps every round; `status <task>` shows each finding as its latest
+  round left it, listing the open and disputed ones.
+- **Consequences:** a pipeline step costs at most 1 + 2·rounds extra turns plus one
+  repair turn per review. Unconfirmed last-round fixes are visible as `fixed` by claim;
+  the R5.6 audit reviews the whole diff again. Stagnation detection and a
+  quota-lowered depth come with R5.4; `[debate]` configuration with it. The `findings` table
+  already admits step 0 (the plan council) and `dismissed` (an arbiter's verdict) for
+  R5.3, since changing a `CHECK` in SQLite rebuilds the table.

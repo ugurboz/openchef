@@ -7,12 +7,12 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use openchef_api::{
-    CODE_APPROVAL_SETTLED, CODE_INVALID_PARAMS, CODE_TASK_INVALID, EditParams, ListParams,
-    METHOD_PLAN_APPROVE, METHOD_PLAN_EDIT, METHOD_PLAN_GET, METHOD_PLAN_REJECT, METHOD_TASK_CANCEL,
-    METHOD_TASK_GET, METHOD_TASK_LIST, METHOD_TASK_PIPELINE, METHOD_TASK_RETRY, METHOD_TASK_RUN,
-    METHOD_TASK_UNWATCH, METHOD_TASK_WATCH, NOTIFY_EVENT, NOTIFY_WATCH_ENDED, PipelineParams,
-    PlanResult, RejectParams, RunParams, TaskDetail, TaskParams, TaskWire, WatchEnded, WatchParams,
-    WatchResult, finished, rpc_error,
+    CODE_APPROVAL_SETTLED, CODE_INVALID_PARAMS, CODE_TASK_INVALID, EditParams, FindingWire,
+    ListParams, METHOD_PLAN_APPROVE, METHOD_PLAN_EDIT, METHOD_PLAN_GET, METHOD_PLAN_REJECT,
+    METHOD_TASK_CANCEL, METHOD_TASK_GET, METHOD_TASK_LIST, METHOD_TASK_PIPELINE, METHOD_TASK_RETRY,
+    METHOD_TASK_RUN, METHOD_TASK_UNWATCH, METHOD_TASK_WATCH, NOTIFY_EVENT, NOTIFY_WATCH_ENDED,
+    PipelineParams, PlanResult, RejectParams, RunParams, TaskDetail, TaskParams, TaskWire,
+    WatchEnded, WatchParams, WatchResult, finished, rpc_error,
 };
 use openchef_core::{PermissionMode, TaskId};
 use openchef_engine::plan::Plan;
@@ -287,6 +287,7 @@ impl Handlers {
             task: TaskWire::from(&d.task),
             steps: d.steps.iter().map(Into::into).collect(),
             attempts: d.attempts.iter().map(Into::into).collect(),
+            findings: d.findings.iter().map(finding_wire).collect(),
             driving: d.driving,
         })
     }
@@ -417,5 +418,22 @@ impl Handlers {
             stop.cancel();
         }
         Ok(Value::Object(serde_json::Map::new()))
+    }
+}
+
+fn finding_wire(f: &openchef_store::FindingRow) -> FindingWire {
+    FindingWire {
+        step: f.step_index,
+        round: f.round,
+        id: f.finding.clone(),
+        severity: f.severity.clone(),
+        file: f.file.clone(),
+        line: f.line,
+        contract: f.contract.clone(),
+        claim: f.claim.clone(),
+        evidence: f.evidence.clone(),
+        fix: f.fix.clone(),
+        status: f.status.clone(),
+        note: f.note.clone(),
     }
 }

@@ -109,6 +109,8 @@ struct CliEnv {
     _dir: tempfile::TempDir,
     repo: PathBuf,
     claude: FakeRuntime,
+    /// The reviewer's runtime, when the env has one.
+    codex: Option<FakeRuntime>,
     deps: Deps,
     daemon: Arc<Mutex<Option<Running>>>,
     quota: QuotaSlot,
@@ -176,9 +178,45 @@ fn spec(approver: Arc<dyn Approver>) -> SessionSpec {
 }
 
 /// Serves `paths` with the fake agent until the token is cancelled.
-fn start_daemon(paths: &Paths, claude: &FakeRuntime, quota_slot: &QuotaSlot) -> Running {
+/// The fakes and their agents: `opus` on claude implements; with `codex`, `gpt` on it
+/// is the reviewer of another provider.
+fn fleet(claude: FakeRuntime, codex: Option<FakeRuntime>) -> (Runtimes, Arc<Ordered>) {
+    let mut runtimes: Runtimes = HashMap::new();
+    runtimes.insert("claude".into(), Arc::new(claude) as Arc<dyn DynRuntime>);
+    let mut agents = vec![Agent {
+        name: "opus".into(),
+        runtime: "claude".into(),
+        model: None,
+        pool: "claude-max".into(),
+        effort: None,
+    }];
+    if let Some(codex) = codex {
+        runtimes.insert("codex".into(), Arc::new(codex) as Arc<dyn DynRuntime>);
+        agents.push(Agent {
+            name: "gpt".into(),
+            runtime: "codex".into(),
+            model: None,
+            pool: "chatgpt-plus".into(),
+            effort: None,
+        });
+    }
+    let router = Arc::new(Ordered {
+        agents,
+        cooldown: None,
+    });
+    (runtimes, router)
+}
+
+/// A daemon over the fakes of [`fleet`].
+fn start_daemon(
+    paths: &Paths,
+    claude: &FakeRuntime,
+    codex: Option<&FakeRuntime>,
+    quota_slot: &QuotaSlot,
+) -> Running {
     let shutdown = CancellationToken::new();
     let (paths, claude, token) = (paths.clone(), claude.clone(), shutdown.clone());
+    let codex = codex.cloned();
     let quota_slot = Arc::clone(quota_slot);
     let thread = std::thread::spawn(move || {
         let rt = tokio::runtime::Builder::new_multi_thread()
@@ -193,18 +231,7 @@ fn start_daemon(paths: &Paths, claude: &FakeRuntime, quota_slot: &QuotaSlot) -> 
                     let store = Store::open(&init_paths.state)
                         .await
                         .map_err(|e| e.to_string())?;
-                    let mut runtimes: Runtimes = HashMap::new();
-                    runtimes.insert("claude".into(), Arc::new(claude) as Arc<dyn DynRuntime>);
-                    let router = Arc::new(Ordered {
-                        agents: vec![Agent {
-                            name: "opus".into(),
-                            runtime: "claude".into(),
-                            model: None,
-                            pool: "claude-max".into(),
-                            effort: None,
-                        }],
-                        cooldown: None,
-                    });
+                    let (runtimes, router) = fleet(claude, codex);
                     let late: Arc<OnceLock<Service>> = Arc::new(OnceLock::new());
                     let spec_for: openchef_engine::SpecFor = {
                         let late = Arc::clone(&late);
@@ -284,6 +311,15 @@ fn wait_for_socket(paths: &Paths) {
 
 impl CliEnv {
     fn new() -> Self {
+        Self::build(false)
+    }
+
+    /// An env whose daemon also has a reviewer of another provider.
+    fn with_reviewer() -> Self {
+        Self::build(true)
+    }
+
+    fn build(reviewer: bool) -> Self {
         let dir = tempfile::tempdir().unwrap();
         let home = dir.path().join("h");
         let repo = dir.path().join("repo");
@@ -297,14 +333,20 @@ impl CliEnv {
             git(&repo, args);
         }
         let claude = FakeRuntime::new("claude", []);
+        let codex = reviewer.then(|| FakeRuntime::new("codex", []));
         let daemon: Arc<Mutex<Option<Running>>> = Arc::new(Mutex::new(None));
         let quota: QuotaSlot = Arc::new(Mutex::new(None));
         let start: StartDaemon = {
-            let (daemon, claude, quota) = (Arc::clone(&daemon), claude.clone(), Arc::clone(&quota));
+            let (daemon, claude, codex, quota) = (
+                Arc::clone(&daemon),
+                claude.clone(),
+                codex.clone(),
+                Arc::clone(&quota),
+            );
             Arc::new(move |paths: &Paths| {
                 let mut d = daemon.lock().unwrap();
                 if d.is_none() {
-                    *d = Some(start_daemon(paths, &claude, &quota));
+                    *d = Some(start_daemon(paths, &claude, codex.as_ref(), &quota));
                     wait_for_socket(paths);
                 }
                 Ok(())
@@ -317,6 +359,7 @@ impl CliEnv {
             _dir: dir,
             repo,
             claude,
+            codex,
             deps,
             daemon,
             quota,
@@ -502,6 +545,7 @@ fn daemon_status_and_stop() {
     let (_token, thread) = start_daemon(
         &paths,
         &FakeRuntime::new("claude", []),
+        None,
         &QuotaSlot::default(),
     );
     wait_for_socket(&paths);
@@ -987,5 +1031,51 @@ fn pipeline_yes_and_reject() {
     assert!(
         code == exit::OK && out.contains("cancelled"),
         "reject: {err}\n{out}"
+    );
+}
+
+/// R5.2 acceptance: a reviewed pipeline step shows its findings in `status <task>`: the
+/// reviewer's attempt by role, counts per status, and the finding still open.
+#[test]
+fn status_shows_review_findings() {
+    let e = CliEnv::with_reviewer();
+    let codex = e.codex.clone().unwrap();
+    let findings = json!({"findings": [
+        {"id": "F1", "severity": "blocker", "file": "out.txt", "line": 1,
+         "claim": "out.txt is empty", "evidence": "the diff writes nothing", "fix": "write x"},
+        {"id": "F2", "severity": "major", "file": "out.txt",
+         "claim": "no trailing newline", "evidence": "POSIX text file", "fix": "add one"},
+        {"id": "F3", "severity": "nit", "claim": "naming", "evidence": "style", "fix": "rename"}
+    ]});
+    codex.push([Turn::completed(findings.to_string())]);
+    e.claude.push([
+        Turn::completed(plan_json(&["write out"])),
+        Turn::editing("done", |d: &Path| {
+            std::fs::write(d.join("out.txt"), "x").map_err(|e| e.to_string())
+        }),
+        Turn::completed("FIXED F1"),
+    ]);
+    let (code, out, err) = e.cli(&["pipeline", "--yes", "-q", "write out.txt"]);
+    assert_eq!(code, exit::OK, "{err}\n{out}");
+    let id = task_id_from(&out);
+    let (code, detail, err) = e.cli(&["status", &id]);
+    assert_eq!(code, exit::OK, "{err}");
+    for want in [
+        "review gpt on chatgpt-plus: succeeded",
+        "findings 1 open, 1 fixed, 1 nit",
+        "open     F2 major   out.txt  no trailing newline",
+    ] {
+        assert!(detail.contains(want), "status lacks {want:?}:\n{detail}");
+    }
+    assert!(
+        !detail.contains("F1 blocker"),
+        "a fixed finding is only counted:\n{detail}"
+    );
+    let (_, json_out, _) = e.cli(&["status", &id, "--json"]);
+    let doc: serde_json::Value = serde_json::from_str(&json_out).unwrap();
+    assert_eq!(
+        doc["findings"].as_array().map(Vec::len),
+        Some(3),
+        "{json_out}"
     );
 }

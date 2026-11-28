@@ -151,7 +151,7 @@ pub fn parse(structured: Option<&Value>, text: &str) -> Result<Plan, Vec<String>
 }
 
 /// The JSON object in `text`: a fenced block's body, or the outermost braces.
-fn json_body(text: &str) -> Option<&str> {
+pub(crate) fn json_body(text: &str) -> Option<&str> {
     if let Some(start) = text.find("```") {
         let rest = &text[start + 3..];
         let rest = rest.strip_prefix("json").unwrap_or(rest);

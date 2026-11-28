@@ -222,6 +222,9 @@ pub struct AttemptWire {
     pub id: i64,
     /// The step.
     pub step: u32,
+    /// What the agent does (`implement`, `review`, …); older daemons send none.
+    #[serde(default = "implement_role")]
+    pub role: String,
     /// The agent.
     pub agent: String,
     /// Its pool.
@@ -243,6 +246,7 @@ impl From<&Attempt> for AttemptWire {
         Self {
             id: a.id,
             step: a.step_index,
+            role: a.role.to_string(),
             agent: a.agent.clone(),
             pool: a.pool.clone(),
             status: a.status.to_string(),
@@ -251,6 +255,43 @@ impl From<&Attempt> for AttemptWire {
             ended_at: opt_time(a.ended_at),
         }
     }
+}
+
+fn implement_role() -> String {
+    openchef_core::AttemptRole::Implement.to_string()
+}
+
+/// The wire form of one review finding in one round (§7.5, D-038).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FindingWire {
+    /// The step reviewed.
+    pub step: u32,
+    /// The review round, from 1.
+    pub round: u32,
+    /// The reviewer's id for it (`F1`), stable across rounds.
+    pub id: String,
+    /// `blocker`, `major` or `nit`.
+    pub severity: String,
+    /// The file.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file: Option<String>,
+    /// The line.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub line: Option<u32>,
+    /// The contract it breaks.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub contract: Option<String>,
+    /// What is wrong.
+    pub claim: String,
+    /// Why the reviewer thinks so.
+    pub evidence: String,
+    /// The suggested change.
+    pub fix: String,
+    /// `open`, `fixed`, `disputed` or `nit`.
+    pub status: String,
+    /// A rebuttal's evidence.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
 }
 
 /// The result of `task/get`.
@@ -262,6 +303,9 @@ pub struct TaskDetail {
     pub steps: Vec<StepWire>,
     /// Its attempts.
     pub attempts: Vec<AttemptWire>,
+    /// Review findings, every round, in step and round order; older daemons send none.
+    #[serde(default)]
+    pub findings: Vec<FindingWire>,
     /// An engine run is in progress.
     pub driving: bool,
 }

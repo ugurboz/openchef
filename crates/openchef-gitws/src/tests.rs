@@ -408,3 +408,22 @@ fn git_env_cleans() {
     .map(|(k, v)| (k.to_owned(), v.to_owned()));
     assert_eq!(got, want);
 }
+
+#[tokio::test]
+async fn diff_shows_tracked_and_untracked_changes() {
+    let mut f = new_repo().await;
+    let (wt, _base) = new_worktree(&mut f).await;
+    std::fs::write(wt.path.join("README.md"), "changed\n").unwrap();
+    std::fs::write(wt.path.join("new.rs"), "fn main() {}\n").unwrap();
+    std::fs::create_dir_all(wt.path.join(CONTROL_DIR)).unwrap();
+    std::fs::write(wt.path.join(CONTROL_DIR).join("x"), "secret").unwrap();
+    let d = wt.diff(10_000).await.unwrap();
+    assert!(d.contains("+changed"), "{d}");
+    assert!(d.contains("new file: new.rs\nfn main() {}"), "{d}");
+    assert!(!d.contains("secret"), "the control dir stays out: {d}");
+    assert!(
+        wt.changed().await.unwrap().contains(&"new.rs".to_owned()),
+        "index untouched"
+    );
+    assert!(wt.diff(5).await.unwrap().len() <= 5);
+}
