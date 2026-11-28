@@ -83,4 +83,14 @@ async fn findings_record_settle_and_list() {
             .await
             .is_err()
     );
+    // The plan council's findings live at step 0; an arbiter dismisses findings.
+    let mut council = row("C1", "major", "dismissed");
+    council.step_index = 0;
+    db.record_findings(vec![council]).await.unwrap();
+    let mut beyond = row("F4", "major", "open");
+    beyond.step_index = 8;
+    assert!(
+        db.record_findings(vec![beyond]).await.is_err(),
+        "steps end at 7"
+    );
 }

@@ -836,4 +836,6 @@ where they name Go packages or types, read the matching crate (`internal/<x>` â†
 - **Consequences:** a pipeline step costs at most 1 + 2Â·rounds extra turns plus one
   repair turn per review. Unconfirmed last-round fixes are visible as `fixed` by claim;
   the R5.6 audit reviews the whole diff again. Stagnation detection and a
-  quota-lowered depth come with R5.4; `[debate]` configuration with it.
+  quota-lowered depth come with R5.4; `[debate]` configuration with it. The `findings` table
+  already admits step 0 (the plan council) and `dismissed` (an arbiter's verdict) for
+  R5.3, since changing a `CHECK` in SQLite rebuilds the table.

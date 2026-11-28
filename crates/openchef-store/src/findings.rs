@@ -14,7 +14,7 @@ pub struct FindingRow {
     pub id: i64,
     /// The task.
     pub task_id: TaskId,
-    /// The step.
+    /// The step; 0 for the plan council.
     pub step_index: u32,
     /// The review round, from 1.
     pub round: u32,
@@ -36,14 +36,14 @@ pub struct FindingRow {
     pub evidence: String,
     /// The suggested change.
     pub fix: String,
-    /// `open`, `fixed`, `disputed` or `nit`.
+    /// `open`, `fixed`, `disputed`, `dismissed` (by an arbiter) or `nit`.
     pub status: String,
     /// A rebuttal's evidence.
     pub note: Option<String>,
 }
 
 const SEVERITIES: [&str; 3] = ["blocker", "major", "nit"];
-const STATUSES: [&str; 4] = ["open", "fixed", "disputed", "nit"];
+const STATUSES: [&str; 5] = ["open", "fixed", "disputed", "dismissed", "nit"];
 
 impl Store {
     /// Stores a review round's findings (their `id` is ignored and assigned).
