@@ -130,6 +130,8 @@ pub struct Detail {
     pub steps: Vec<Step>,
     /// Its attempts.
     pub attempts: Vec<Attempt>,
+    /// Its review findings, every round, in step and round order.
+    pub findings: Vec<openchef_store::FindingRow>,
     /// An engine run is in progress in this daemon.
     pub driving: bool,
 }
@@ -405,11 +407,13 @@ impl Service {
         let task = self.inner.store.task(id).await?;
         let steps = self.inner.store.steps(id).await?;
         let attempts = self.inner.store.attempts(id).await?;
+        let findings = self.inner.store.findings(id).await?;
         let driving = self.inner.state().running.contains_key(id);
         Ok(Detail {
             task,
             steps,
             attempts,
+            findings,
             driving,
         })
     }
