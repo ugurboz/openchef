@@ -49,6 +49,10 @@ pub(crate) fn embedded() -> Vec<Migration> {
             "0005_parallel_critics.sql",
             include_str!("../migrations/0005_parallel_critics.sql"),
         ),
+        Migration::new(
+            "0006_debate_budget.sql",
+            include_str!("../migrations/0006_debate_budget.sql"),
+        ),
     ]
 }
 

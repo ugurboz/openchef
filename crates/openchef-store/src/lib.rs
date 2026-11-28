@@ -8,6 +8,7 @@
 mod approvals;
 mod attempts;
 mod db;
+mod debate;
 mod error;
 mod findings;
 mod migrate;
