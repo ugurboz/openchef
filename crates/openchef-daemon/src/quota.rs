@@ -828,7 +828,8 @@ impl openchef_engine::Sink for QuotaTap {
             | EventKind::CouncilStarted
             | EventKind::CouncilFinished
             | EventKind::ArbitrationStarted
-            | EventKind::ArbitrationFinished => {}
+            | EventKind::ArbitrationFinished
+            | EventKind::Stagnated => {}
         }
     }
 }
@@ -1316,6 +1317,7 @@ mod tests {
             agents: BTreeMap::new(),
             routing: BTreeMap::new(),
             quota: Switches::default(),
+            debate: openchef_core::Debate::default(),
         };
         let dir = tempfile::tempdir().unwrap_or_else(|e| panic!("{e}"));
         let names = |cfg: &Config| -> Vec<(String, String)> {

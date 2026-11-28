@@ -4,7 +4,7 @@
 
 use std::collections::BTreeSet;
 
-use openchef_core::{Importance, Step};
+use openchef_core::Step;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -74,17 +74,6 @@ pub struct Finding {
 pub struct Review {
     /// The findings; empty when the diff is fine.
     pub findings: Vec<Finding>,
-}
-
-/// How many review rounds a step gets, by importance (§7.5 depth table).
-#[must_use]
-pub const fn rounds(importance: Importance) -> u32 {
-    match importance {
-        Importance::Low => 0,
-        Importance::Normal => 1,
-        Importance::High => 2,
-        Importance::Critical => 3,
-    }
 }
 
 /// The JSON Schema of a reviewer's structured output.
@@ -281,10 +270,9 @@ pub fn rebuttals(answer: &str) -> Vec<(String, String)> {
 
 #[cfg(test)]
 mod tests {
-    use openchef_core::Importance;
     use serde_json::json;
 
-    use super::{Severity, bounded_diff, fixed_claims, parse, rebuttals, rounds, schema};
+    use super::{Severity, bounded_diff, fixed_claims, parse, rebuttals, schema};
 
     fn finding(id: &str, severity: &str, file: Option<&str>) -> serde_json::Value {
         json!({"id": id, "severity": severity, "file": file, "line": null, "contract": null,
@@ -342,9 +330,7 @@ mod tests {
     }
 
     #[test]
-    fn depth_and_bounds() {
-        assert_eq!(rounds(Importance::Low), 0);
-        assert_eq!(rounds(Importance::Critical), 3);
+    fn bounds() {
         let long = "x".repeat(super::MAX_DIFF + 5);
         assert!(bounded_diff(&long).ends_with("worktree)"));
         assert_eq!(

@@ -7,11 +7,12 @@ use openchef_runtime::FailureKind;
 use openchef_store::NewAttempt;
 
 use crate::council;
+use crate::debate::Level;
 use crate::engine::{Error, Run};
 use crate::events::EventKind;
 use crate::plan::{self, Plan};
 use crate::review::Finding;
-use crate::reviewing::finding_rows;
+use crate::reviewing::{finding_rows, skip_reason};
 use crate::router::{Agent, Avoid};
 use crate::session::Live;
 use crate::turn::TurnEnd;
@@ -35,17 +36,18 @@ impl Run<'_> {
         live: &mut Option<Live>,
         mut plan: Plan,
     ) -> Result<Plan, Error> {
-        let importance = council::importance(self.task.importance, &plan);
-        let depth = council::depth(importance);
-        if depth.critics == 0 {
+        // The budget is sized by the plan's steps from here on (D-040).
+        self.debate_steps = plan.steps.len();
+        let mut level = Level::new(council::importance(self.task.importance, &plan));
+        self.lower_for(&mut level, 0, &planner.pool);
+        if self.depth(level).council_critics == 0 {
             return Ok(plan);
         }
-        let mut critics = self
-            .open_critics(planner, importance, depth.critics)
-            .await?;
+        let mut critics = self.open_critics(planner, &mut level).await?;
         if critics.is_empty() {
             return Ok(plan);
         }
+        let rounds = self.depth(level).council_rounds;
         let result = self
             .council_rounds(
                 planner_attempt,
@@ -53,7 +55,7 @@ impl Run<'_> {
                 live,
                 &mut critics,
                 &mut plan,
-                depth.rounds,
+                rounds,
             )
             .await;
         for c in critics {
@@ -65,20 +67,22 @@ impl Run<'_> {
         result.map(|()| plan)
     }
 
-    /// Routes and starts up to `wanted` critics, each of a provider neither the planner
-    /// nor an earlier critic uses. None at all → the council is skipped, said so.
-    async fn open_critics(
-        &self,
-        planner: &Agent,
-        importance: openchef_core::Importance,
-        wanted: usize,
-    ) -> Result<Vec<Critic>, Error> {
+    /// Routes and starts the critics `level` asks for, each of a provider neither the
+    /// planner nor an earlier critic uses; a critic's pool under pressure may lower
+    /// `level`. None at all → the council is skipped, said so.
+    async fn open_critics(&self, planner: &Agent, level: &mut Level) -> Result<Vec<Critic>, Error> {
         let mut step = self.planning_step();
-        step.importance = importance;
         let mut avoid = Avoid::runtimes([planner.runtime.as_str()]);
         let mut critics = Vec::new();
         let mut why = String::new();
-        while critics.len() < wanted {
+        let wanted =
+            |r: &Self, l: Level| usize::try_from(r.depth(l).council_critics).unwrap_or(usize::MAX);
+        while critics.len() < wanted(self, *level) {
+            step.importance = level.importance();
+            if !self.debate_left(0).await? {
+                why = self.budget_reason();
+                break;
+            }
             let agent = match self
                 .e
                 .cfg
@@ -87,15 +91,20 @@ impl Run<'_> {
             {
                 Ok(a) => a,
                 Err(no) => {
-                    why = no.reason;
+                    why = skip_reason(&no);
                     break;
                 }
             };
             avoid.runtimes.push(agent.runtime.clone());
+            if self.lower_for(level, 0, &agent.pool) && critics.len() >= wanted(self, *level) {
+                "the lowered debate needs no more critics".clone_into(&mut why);
+                break;
+            }
             if let Some(c) = self.open_critic(agent).await? {
                 critics.push(c);
             }
         }
+        let wanted = wanted(self, *level);
         if critics.is_empty() {
             self.council_finished("skipped", &why);
         } else if critics.len() < wanted {
@@ -270,6 +279,14 @@ impl Run<'_> {
         let schema = plan::schema();
         let mut msg = council::revision_prompt(blocking);
         for turn in 0..2 {
+            if !self.spend_debate_turn(0).await? {
+                self.notice(
+                    0,
+                    Some(a.id),
+                    format!("no revision: {}", self.budget_reason()),
+                );
+                return Ok(None);
+            }
             let Some(l) = live.as_mut() else {
                 return Ok(None);
             };

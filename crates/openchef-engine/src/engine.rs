@@ -104,6 +104,8 @@ pub struct Config {
     pub session_root: PathBuf,
     /// Limits.
     pub limits: Limits,
+    /// Debate depth and budget (§7.5, D-040).
+    pub debate: openchef_core::Debate,
     /// Quota cooldown feedback.
     pub pool_exhausted: Option<PoolExhausted>,
     /// Live events.
@@ -134,6 +136,7 @@ impl Config {
             worktree_root: home.join("worktrees"),
             session_root: home.join("sessions"),
             limits: Limits::default(),
+            debate: openchef_core::Debate::default(),
             pool_exhausted: None,
             sink: Arc::new(Discard),
             sleep: None,
@@ -294,6 +297,10 @@ pub(crate) struct Run<'e> {
     pub(crate) task: Task,
     pub(crate) steps: Vec<Step>,
     pub(crate) wt: Option<Worktree>,
+    /// The step count the debate budget is sized by: the plan's during the council.
+    pub(crate) debate_steps: usize,
+    /// The "budget used up" notice was published in this run.
+    pub(crate) budget_noted: std::sync::atomic::AtomicBool,
 }
 
 impl<'e> Run<'e> {
@@ -314,8 +321,10 @@ impl<'e> Run<'e> {
             e,
             shutdown,
             task,
+            debate_steps: steps.len(),
             steps,
             wt: None,
+            budget_noted: std::sync::atomic::AtomicBool::new(false),
         })
     }
 

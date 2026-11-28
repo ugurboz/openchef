@@ -106,3 +106,32 @@ pub(crate) fn handoff_prompt(
 fn short(sha: &str) -> &str {
     sha.get(..12).unwrap_or(sha)
 }
+
+/// The escalation turn (§7.5, D-040): another agent's loop on this step stopped making
+/// progress; one turn on the worktree as it was left.
+pub(crate) fn escalation_prompt(
+    t: &Task,
+    s: &Step,
+    total: usize,
+    from: &str,
+    why: &str,
+    evidence: &str,
+) -> String {
+    let mut b = format!(
+        "You are taking over this step from another agent ({from}) whose work stopped making progress: {why}. \
+         The workspace holds its changes as it left them. Find the real cause and finish the step in this one \
+         turn; verification runs once after your answer.\n"
+    );
+    if !evidence.trim().is_empty() {
+        let _w = write!(
+            b,
+            "\nWhat kept failing:\n```\n{}\n```\n",
+            evidence.trim_end()
+        );
+    }
+    b.push_str(
+        "\nIf it concerns reviewer findings, end your answer with one line per finding you fixed: `FIXED <id>`.\n\n",
+    );
+    b.push_str(&restate(t, s, total));
+    b
+}

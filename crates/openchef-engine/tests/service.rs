@@ -187,6 +187,11 @@ impl Env {
     /// A service whose router also has `gem` on agy (pool `gemini`): a third provider for
     /// a second critic or an arbiter.
     fn three_providers(&self) -> Service {
+        self.three_providers_with(|_| {})
+    }
+
+    /// [`Env::three_providers`] with `tweak` applied to the deps.
+    fn three_providers_with(&self, tweak: impl FnOnce(&mut Deps)) -> Service {
         self.service_deps(|d| {
             let agent = |name: &str, runtime: &str, pool: &str| Agent {
                 name: name.into(),
@@ -203,6 +208,7 @@ impl Env {
                 ],
                 cooldown: None,
             });
+            tweak(d);
         })
     }
 
@@ -1334,7 +1340,8 @@ async fn council_revises_a_high_plan() {
 #[tokio::test(flavor = "multi_thread")]
 async fn council_round_limit_leaves_findings_for_approval() {
     let e = env().await;
-    let s = e.three_providers();
+    // 6 critiques and 2 revisions exceed a one-step plan's default budget of 6 turns.
+    let s = e.three_providers_with(|d| d.engine.debate.max_turns_per_task = Some(20));
     e.claude.push([
         Turn::completed(plan_doc("critical", "v1")),
         Turn::completed(plan_doc("critical", "v2")),
@@ -1527,6 +1534,353 @@ async fn arbiter_absent_or_invalid_leaves_disputes() {
     assert_eq!(
         statuses(&e, &id, 1).await,
         [("F1".to_owned(), "disputed".to_owned())]
+    );
+    stop(&s).await;
+}
+
+// --- circuit breakers (R5.4, D-040) -----------------------------------------------------
+
+/// Points the verification of [`checked_pipeline`] at `done.txt`.
+fn check_done(d: &mut Deps) {
+    d.engine
+        .verify_env
+        .push(("OPENCHEF_VERIFY_HELPER".into(), "check:done.txt".into()));
+}
+
+fn write_done(dir: &Path) -> Result<(), String> {
+    std::fs::write(dir.join("done.txt"), "done\n").map_err(|e| e.to_string())
+}
+
+/// An approved one-step pipeline whose verification fails until `done.txt` exists,
+/// always with the same output.
+async fn checked_pipeline(e: &Env, s: &Service, importance: &str) -> TaskId {
+    let verify = env!("CARGO_BIN_EXE_verify-test-helper");
+    assert!(!verify.contains([' ', '"']), "helper path needs quoting");
+    let plan = serde_json::json!({"title": "T", "steps": [{"title": "only", "prompt": "create done.txt",
+        "files": ["done.txt"], "verify": verify, "size": "small", "importance": importance, "reason": "r"}]});
+    e.claude.push([Turn::completed(plan.to_string())]);
+    let mut req = e.run("checked");
+    req.importance = Some(importance.parse().unwrap());
+    let t = s.pipeline(req, false).await.unwrap();
+    e.wait_status(&t.id, TaskStatus::AwaitingApproval).await;
+    t.id
+}
+
+fn opus_only() -> Arc<Ordered> {
+    Arc::new(Ordered {
+        agents: vec![Agent {
+            name: "opus".into(),
+            runtime: "claude".into(),
+            model: None,
+            pool: "claude-max".into(),
+            effort: None,
+        }],
+        cooldown: None,
+    })
+}
+
+/// The same verification failure twice stops the implementer; one escalation turn by an
+/// agent on another pool finishes the step, with no further review.
+#[tokio::test(flavor = "multi_thread")]
+async fn stagnant_verification_escalates_to_another_pool() {
+    let e = env().await;
+    let s = e.three_providers_with(check_done);
+    let id = checked_pipeline(&e, &s, "normal").await;
+    e.claude
+        .push([Turn::completed("tried"), Turn::completed("tried again")]);
+    e.codex.push([Turn::editing("found it", write_done)]);
+    let _a = s.approve(&id).await.unwrap();
+    e.wait_status(&id, TaskStatus::Done).await;
+    assert_eq!(
+        e.claude.turns().len(),
+        3,
+        "plan + two turns, not the third retry"
+    );
+    let codex = e.codex.turns();
+    assert!(
+        codex.len() == 1
+            && codex[0].contains("taking over this step from another agent (opus)")
+            && codex[0].contains("the same verification failure twice in a row")
+            && codex[0].contains("missing done.txt"),
+        "{codex:?}"
+    );
+    assert!(e.agy.turns().is_empty(), "the escalation is the last word");
+    let attempts: Vec<(String, openchef_core::AttemptStatus)> = e
+        .store
+        .attempts(&id)
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|a| a.step_index == 1)
+        .map(|a| (a.agent, a.status))
+        .collect();
+    assert_eq!(
+        attempts,
+        [
+            ("opus".to_owned(), openchef_core::AttemptStatus::Failed),
+            ("gpt".to_owned(), openchef_core::AttemptStatus::Succeeded)
+        ]
+    );
+    assert_eq!(events_of(&s, &id, EventKind::Stagnated).await.len(), 1);
+    assert_eq!(
+        e.store.debate_turns(&id).await.unwrap(),
+        1,
+        "the escalation"
+    );
+    stop(&s).await;
+}
+
+/// Without another pool a stagnating step needs attention at once.
+#[tokio::test(flavor = "multi_thread")]
+async fn stagnation_without_escalation_needs_attention() {
+    let e = env().await;
+    let s = e.service_deps(|d| {
+        check_done(d);
+        d.engine.router = opus_only();
+    });
+    let id = checked_pipeline(&e, &s, "normal").await;
+    e.claude
+        .push([Turn::completed("tried"), Turn::completed("tried again")]);
+    let _a = s.approve(&id).await.unwrap();
+    let t = e.wait_status(&id, TaskStatus::NeedsAttention).await;
+    let reason = t.reason.unwrap_or_default();
+    assert!(
+        reason.contains("stagnated: the same verification failure")
+            && reason.contains("no escalation"),
+        "{reason}"
+    );
+    assert_eq!(e.claude.turns().len(), 3, "plan + two turns");
+    stop(&s).await;
+}
+
+/// A finding reported again after it was fixed is stagnation too.
+#[tokio::test(flavor = "multi_thread")]
+async fn reopened_finding_escalates() {
+    let e = env().await;
+    let s = e.service_deps(|d| {
+        d.engine.debate.set_depth(
+            openchef_core::Importance::Normal,
+            openchef_core::DebateDepth {
+                council_critics: 0,
+                council_rounds: 0,
+                review_rounds: 3,
+            },
+        );
+    });
+    let id = approved_pipeline(&e, &s, "normal").await;
+    e.claude.push([
+        Turn::editing("done", write_file),
+        Turn::completed("FIXED F1"),
+        Turn::completed("FIXED F2"),
+    ]);
+    e.codex.push([
+        Turn::completed(review_answer(&[("F1", "blocker", Some("out.txt"))])),
+        Turn::completed(review_answer(&[("F2", "major", Some("out.txt"))])),
+        Turn::completed(review_answer(&[("F1", "blocker", Some("out.txt"))])),
+        Turn::completed("rewrote it\nFIXED F1"),
+    ]);
+    let _a = s.approve(&id).await.unwrap();
+    e.wait_status(&id, TaskStatus::Done).await;
+    let codex = e.codex.turns();
+    assert!(
+        codex.len() == 4 && codex[3].contains("F1 reported again after a fix"),
+        "{codex:?}"
+    );
+    let open: Vec<(u32, String, String)> = e
+        .store
+        .findings(&id)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|f| (f.round, f.finding, f.status))
+        .collect();
+    assert_eq!(
+        open,
+        [
+            (1, "F1".to_owned(), "fixed".to_owned()),
+            (2, "F2".to_owned(), "fixed".to_owned()),
+            (3, "F1".to_owned(), "fixed".to_owned())
+        ]
+    );
+    stop(&s).await;
+}
+
+/// A reviewer refused by quota is recorded as skipped for quota; the step commits.
+#[tokio::test(flavor = "multi_thread")]
+async fn reviewer_out_of_quota_is_skipped_for_quota() {
+    let e = env().await;
+    let s = e.service_deps(|d| {
+        let later = OffsetDateTime::now_utc() + time::Duration::hours(1);
+        d.engine.router = Arc::new(Ordered {
+            agents: vec![
+                Agent {
+                    name: "opus".into(),
+                    runtime: "claude".into(),
+                    model: None,
+                    pool: "claude-max".into(),
+                    effort: None,
+                },
+                Agent {
+                    name: "gpt".into(),
+                    runtime: "codex".into(),
+                    model: None,
+                    pool: "chatgpt-plus".into(),
+                    effort: None,
+                },
+            ],
+            cooldown: Some(Arc::new(move |pool: &str| {
+                (pool == "chatgpt-plus").then_some(later)
+            })),
+        });
+    });
+    let id = approved_pipeline(&e, &s, "normal").await;
+    e.claude.push([Turn::editing("done", write_file)]);
+    let _a = s.approve(&id).await.unwrap();
+    e.wait_status(&id, TaskStatus::Done).await;
+    let skipped = events_of(&s, &id, EventKind::ReviewFinished).await;
+    assert!(
+        skipped.len() == 1
+            && skipped[0]
+                .message
+                .as_deref()
+                .unwrap_or_default()
+                .starts_with("skipped for quota: "),
+        "{skipped:?}"
+    );
+    assert!(e.codex.turns().is_empty(), "no reviewer turn");
+    stop(&s).await;
+}
+
+/// A fix turn out of quota fails over like an implement turn; the next attempt's review
+/// continues with the next round and the open finding.
+#[tokio::test(flavor = "multi_thread")]
+async fn fix_turn_out_of_quota_fails_over_and_review_continues() {
+    let e = env().await;
+    let s = e.service();
+    let id = approved_pipeline(&e, &s, "high").await;
+    e.claude.push([
+        Turn::editing("done", write_file),
+        Turn::failing(FailureKind::QuotaExhausted, "out of quota"),
+        Turn::completed(review_answer(&[])),
+    ]);
+    e.codex.push([
+        Turn::completed(review_answer(&[("F1", "blocker", Some("out.txt"))])),
+        Turn::editing("took over", write_file),
+    ]);
+    let _a = s.approve(&id).await.unwrap();
+    e.wait_status(&id, TaskStatus::Done).await;
+    let claude = e.claude.turns();
+    assert!(
+        claude.len() == 4 && claude[3].contains("round 2") && claude[3].contains("F1"),
+        "the second round reviews the handoff with the open finding: {claude:?}"
+    );
+    let rounds: Vec<(u32, String, String)> = e
+        .store
+        .findings(&id)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|f| (f.round, f.finding, f.status))
+        .collect();
+    assert_eq!(rounds, [(1, "F1".to_owned(), "fixed".to_owned())]);
+    stop(&s).await;
+}
+
+/// A used-up budget stops the debate, not the step.
+#[tokio::test(flavor = "multi_thread")]
+async fn debate_budget_stops_debate_but_not_the_commit() {
+    let e = env().await;
+    let s = e.service_deps(|d| d.engine.debate.max_turns_per_task = Some(1));
+    let id = approved_pipeline(&e, &s, "normal").await;
+    e.claude.push([Turn::editing("done", write_file)]);
+    e.codex.push([Turn::completed(review_answer(&[(
+        "F1",
+        "blocker",
+        Some("out.txt"),
+    )]))]);
+    let _a = s.approve(&id).await.unwrap();
+    e.wait_status(&id, TaskStatus::Done).await;
+    assert_eq!(e.claude.turns().len(), 2, "no fix turn after the budget");
+    assert_eq!(e.store.findings(&id).await.unwrap()[0].status, "open");
+    let notices = events_of(&s, &id, EventKind::Notice).await;
+    assert!(
+        notices.iter().any(|n| n
+            .message
+            .as_deref()
+            .unwrap_or_default()
+            .contains("debate budget used up (1 turns)")),
+        "{notices:?}"
+    );
+    assert_eq!(e.store.debate_turns(&id).await.unwrap(), 1);
+    stop(&s).await;
+}
+
+/// A router whose `claude-max` pool is under pressure.
+struct Pressured(Ordered);
+
+impl openchef_engine::Router for Pressured {
+    fn route(
+        &self,
+        task: &Task,
+        step: &openchef_core::Step,
+        exclude: &[String],
+    ) -> Result<Agent, openchef_engine::NoAgent> {
+        self.0.route(task, step, exclude)
+    }
+
+    fn agent_named(&self, name: &str) -> Option<Agent> {
+        self.0.agent_named(name)
+    }
+
+    fn route_independent(
+        &self,
+        task: &Task,
+        step: &openchef_core::Step,
+        avoid: &openchef_engine::Avoid,
+    ) -> Result<Agent, openchef_engine::NoAgent> {
+        self.0.route_independent(task, step, avoid)
+    }
+
+    fn pressure(&self, pool: &str) -> Option<String> {
+        (pool == "claude-max").then(|| "pool claude-max is yellow".to_owned())
+    }
+}
+
+/// The implementer's pool under pressure lowers a `normal` step's review to none.
+#[tokio::test(flavor = "multi_thread")]
+async fn pressure_lowers_the_debate() {
+    let e = env().await;
+    let s = e.service_deps(|d| {
+        d.engine.router = Arc::new(Pressured(Ordered {
+            agents: vec![
+                Agent {
+                    name: "opus".into(),
+                    runtime: "claude".into(),
+                    model: None,
+                    pool: "claude-max".into(),
+                    effort: None,
+                },
+                Agent {
+                    name: "gpt".into(),
+                    runtime: "codex".into(),
+                    model: None,
+                    pool: "chatgpt-plus".into(),
+                    effort: None,
+                },
+            ],
+            cooldown: None,
+        }));
+    });
+    let id = approved_pipeline(&e, &s, "normal").await;
+    e.claude.push([Turn::editing("done", write_file)]);
+    let _a = s.approve(&id).await.unwrap();
+    e.wait_status(&id, TaskStatus::Done).await;
+    assert!(e.codex.turns().is_empty(), "no review at the lowered depth");
+    let notices = events_of(&s, &id, EventKind::Notice).await;
+    assert!(
+        notices.iter().any(|n| n.message.as_deref()
+            == Some("debate lowered from normal to low: pool claude-max is yellow")),
+        "{notices:?}"
     );
     stop(&s).await;
 }

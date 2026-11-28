@@ -60,6 +60,7 @@ impl<'w> Renderer<'w> {
                 EventKind::ArbitrationFinished if ev.status.as_deref() == Some("ruled") => {
                     self.arbitration(ev)
                 }
+                EventKind::Stagnated => self.stagnated(ev),
                 EventKind::ReviewStarted
                 | EventKind::ReviewFinished
                 | EventKind::CouncilStarted
@@ -132,7 +133,17 @@ impl<'w> Renderer<'w> {
                 ev.agent.as_deref().unwrap_or("")
             )),
             EventKind::ArbitrationFinished => self.arbitration(ev),
+            EventKind::Stagnated => self.stagnated(ev),
         }
+    }
+
+    /// A step that stopped making progress.
+    fn stagnated(&mut self, ev: &Event) -> io::Result<()> {
+        self.line(&format!(
+            "  ! step {} stagnated: {}",
+            ev.step.unwrap_or(0),
+            sanitize(ev.message.as_deref().unwrap_or(""))
+        ))
     }
 
     /// The plan council's outcome.

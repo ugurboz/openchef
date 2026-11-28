@@ -27,6 +27,8 @@ pub struct NoAgent {
     pub resume_at: Option<OffsetDateTime>,
     /// Why.
     pub reason: String,
+    /// Agents that fit exist, but quota (admission or a cooldown) refuses them all.
+    pub quota: bool,
 }
 
 /// Picks the agent for an attempt at a step. `exclude` lists pools that must not be
@@ -60,7 +62,14 @@ pub trait Router: Send + Sync {
         Err(NoAgent {
             resume_at: None,
             reason: format!("no agent outside {avoid} is configured"),
+            quota: false,
         })
+    }
+
+    /// Why the debate this pool pays for should be lowered (§7.5): an `auto` effort pool
+    /// in `yellow` or `red`; `None` when it has room.
+    fn pressure(&self, _pool: &str) -> Option<String> {
+        None
     }
 }
 
@@ -147,6 +156,7 @@ impl Router for Ordered {
         };
         Err(NoAgent {
             resume_at: earliest,
+            quota: earliest.is_some(),
             reason,
         })
     }
@@ -161,15 +171,20 @@ impl Router for Ordered {
         _step: &Step,
         avoid: &Avoid,
     ) -> Result<Agent, NoAgent> {
-        self.agents
-            .iter()
-            .find(|a| {
-                avoid.allows(a) && self.cooldown.as_ref().is_none_or(|c| c(&a.pool).is_none())
-            })
-            .cloned()
-            .ok_or_else(|| NoAgent {
-                resume_at: None,
-                reason: format!("no agent outside {avoid} is available"),
-            })
+        let mut cooling: Option<OffsetDateTime> = None;
+        for a in self.agents.iter().filter(|a| avoid.allows(a)) {
+            match self.cooldown.as_ref().and_then(|c| c(&a.pool)) {
+                None => return Ok(a.clone()),
+                Some(until) => cooling = Some(cooling.map_or(until, |e| e.min(until))),
+            }
+        }
+        Err(NoAgent {
+            resume_at: cooling,
+            reason: match cooling {
+                Some(_) => format!("every agent outside {avoid} is out of quota"),
+                None => format!("no agent outside {avoid} is available"),
+            },
+            quota: cooling.is_some(),
+        })
     }
 }

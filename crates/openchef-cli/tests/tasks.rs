@@ -1064,6 +1064,7 @@ fn status_shows_review_findings() {
         "review gpt on chatgpt-plus: succeeded",
         "findings 1 open, 1 fixed, 1 nit",
         "open     F2 major   out.txt  no trailing newline",
+        "debate   2 of 6 turns",
     ] {
         assert!(detail.contains(want), "status lacks {want:?}:\n{detail}");
     }

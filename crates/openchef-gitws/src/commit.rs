@@ -188,6 +188,26 @@ impl Worktree {
         Ok(true)
     }
 
+    /// The worktree's content as a git tree id: every uncommitted change (staged,
+    /// unstaged, untracked; [`CONTROL_DIR`] excluded) on top of HEAD. Equal ids mean equal
+    /// content, so a loop can tell when work returns to an earlier state. The index is
+    /// left as HEAD's, as by [`Self::capture_patch`].
+    ///
+    /// # Errors
+    ///
+    /// When git fails.
+    pub async fn state(&self) -> Result<String, Error> {
+        let exclude = format!(":(exclude,top){CONTROL_DIR}");
+        self.git
+            .run(&self.path, None, &["add", "--all", "--", ".", &exclude])
+            .await?;
+        let tree = self.git.line(&self.path, &["write-tree"]).await;
+        let reset = self.git.run(&self.path, None, &["reset", "--quiet"]).await;
+        let tree = tree?;
+        reset?;
+        Ok(tree)
+    }
+
     /// Discards every uncommitted change and moves the branch to `commit` (the last
     /// verified step), keeping [`CONTROL_DIR`].
     ///

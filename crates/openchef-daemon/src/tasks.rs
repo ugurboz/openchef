@@ -297,6 +297,8 @@ impl Handlers {
             steps: d.steps.iter().map(Into::into).collect(),
             attempts: d.attempts.iter().map(Into::into).collect(),
             findings: d.findings.iter().map(finding_wire).collect(),
+            debate_turns: d.debate_turns.0,
+            debate_budget: d.debate_turns.1,
             driving: d.driving,
         })
     }

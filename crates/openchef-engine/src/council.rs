@@ -1,39 +1,11 @@
-//! The plan council's documents (§7.5 phase 2, D-039): how many critics and rounds a
-//! task gets, the critic's and the revision turn's prompts, and the rule that a plan
-//! finding is located by a repository file or a step of the plan.
+//! The plan council's documents (§7.5 phase 2, D-039): the importance it runs at, the
+//! critic's and the revision turn's prompts, and the rule that a plan finding is located
+//! by a repository file or a step of the plan. The depth table is `[debate]` (D-040).
 
 use openchef_core::Importance;
 
 use crate::plan::Plan;
 use crate::review::{Finding, Review, Severity};
-
-/// How much council a task gets.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Depth {
-    /// Critics wanted, each of another provider.
-    pub critics: usize,
-    /// Critique rounds at most.
-    pub rounds: u32,
-}
-
-/// The council's depth by importance (§7.5 depth table).
-#[must_use]
-pub const fn depth(importance: Importance) -> Depth {
-    match importance {
-        Importance::Low | Importance::Normal => Depth {
-            critics: 0,
-            rounds: 0,
-        },
-        Importance::High => Depth {
-            critics: 1,
-            rounds: 2,
-        },
-        Importance::Critical => Depth {
-            critics: 2,
-            rounds: 3,
-        },
-    }
-}
 
 /// The importance the council uses: the task's floor, raised by the highest step
 /// importance the planner proposed.
@@ -155,7 +127,7 @@ mod tests {
     use openchef_core::Importance;
     use serde_json::json;
 
-    use super::{critic_prompt, depth, importance, locate, revision_prompt};
+    use super::{critic_prompt, importance, locate, revision_prompt};
     use crate::plan::Plan;
     use crate::review::{self, Severity};
 
@@ -171,22 +143,7 @@ mod tests {
     }
 
     #[test]
-    fn depth_and_importance() {
-        assert_eq!(depth(Importance::Normal).critics, 0);
-        assert_eq!(
-            (
-                depth(Importance::High).critics,
-                depth(Importance::High).rounds
-            ),
-            (1, 2)
-        );
-        assert_eq!(
-            (
-                depth(Importance::Critical).critics,
-                depth(Importance::Critical).rounds
-            ),
-            (2, 3)
-        );
+    fn importance_is_raised_by_the_plan() {
         let p = plan(&["normal", "high"]);
         assert_eq!(importance(Importance::Low, &p), Importance::High);
         assert_eq!(importance(Importance::Critical, &p), Importance::Critical);

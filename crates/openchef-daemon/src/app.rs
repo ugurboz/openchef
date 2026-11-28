@@ -191,6 +191,7 @@ fn build(
         Arc::new(move |t: &Task, a: &Agent, role: AttemptRole| session.spec(t, a, role));
     let mut engine = EngineConfig::new(store.clone(), runtimes, router, spec_for, &paths.home);
     engine.verify_env = openchef_engine::verify::minimal_env(std::env::vars_os(), &[]);
+    engine.debate = cfg.debate.clone();
     engine.confine_verify = Some(Arc::new(move |t: &Task| sandboxes.verify(t)));
     engine.pool_exhausted = Some({
         let q = quota.clone();
@@ -377,6 +378,7 @@ mod tests {
             ]),
             routing,
             quota: Quota::default(),
+            debate: openchef_core::Debate::default(),
         };
         let got = agents(&cfg);
         let names: Vec<&str> = got.iter().map(|a| a.name.as_str()).collect();

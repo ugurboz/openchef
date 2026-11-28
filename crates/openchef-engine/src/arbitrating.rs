@@ -5,21 +5,36 @@
 use std::collections::BTreeMap;
 
 use openchef_core::{Attempt, AttemptRole, AttemptStatus, TurnKind};
+use openchef_runtime::Failure;
 use openchef_store::NewAttempt;
 
 use crate::arbiter::{self, Dispute, Ruling, Verdicts};
+use crate::breakers::Progress;
 use crate::engine::{Error, Run};
+use crate::escalating::Stagnation;
 use crate::events::EventKind;
 use crate::review;
-use crate::reviewing::Judge;
+use crate::reviewing::{Judge, Reverified, out_of_quota, skip_reason};
 use crate::router::{Agent, Avoid};
 use crate::session::Live;
 use crate::turn::TurnEnd;
 
+/// How a step's arbitration ended.
+pub(crate) enum Ruled {
+    /// Ruled (or skipped: the findings stay `disputed`); the step may commit.
+    Done,
+    /// The upheld fix broke verification and the retries ran out.
+    Failed,
+    /// The upheld fix's verification stagnated.
+    Stagnated(Stagnation),
+    /// The implementer's pool ran out during the upheld fix: fail over (§7.2).
+    Exhausted(Failure),
+}
+
 impl Run<'_> {
     /// Rules on step `i`'s disputes (with the round each was raised in) and runs the
-    /// fix turn for upheld ones. `Ok(false)` when that fix's verification ran out of
-    /// retries; a missing or failing arbiter leaves the findings `disputed`.
+    /// fix turn for upheld ones. A missing or failing arbiter, or a used-up budget,
+    /// leaves the findings `disputed`.
     #[allow(
         clippy::too_many_arguments,
         reason = "the step's attempt context, as reviewed_commit"
@@ -30,24 +45,28 @@ impl Run<'_> {
         a: &Attempt,
         implementer: &Agent,
         live: &mut Option<Live>,
-        retries: &mut u32,
+        progress: &mut Progress,
         disputes: &[(u32, Dispute)],
         judged: &Avoid,
-    ) -> Result<bool, Error> {
+    ) -> Result<Ruled, Error> {
         let index = self.steps[i].index;
+        if !self.debate_left(index).await? {
+            self.arbitration_finished(index, None, None, "skipped", &self.budget_reason());
+            return Ok(Ruled::Done);
+        }
         let arbiter = match self.route_arbiter(i, judged) {
             Ok(agent) => agent,
             Err(why) => {
                 self.arbitration_finished(index, None, None, "skipped", &why);
-                return Ok(true);
+                return Ok(Ruled::Done);
             }
         };
         let Some(verdicts) = self.rulings(i, &arbiter, disputes).await? else {
-            return Ok(true);
+            return Ok(Ruled::Done);
         };
         let upheld = self.apply_rulings(index, disputes, &verdicts).await?;
-        if upheld.is_empty() {
-            return Ok(true);
+        if upheld.is_empty() || !self.spend_debate_turn(index).await? {
+            return Ok(Ruled::Done); // upheld findings without a fix turn stay open
         }
         let Some(l) = live.as_mut() else {
             return Err(Error::Session("the attempt has no session".into()));
@@ -62,6 +81,7 @@ impl Run<'_> {
             .await?
         {
             TurnEnd::Completed(r) => r.final_text,
+            TurnEnd::Failed(f) if out_of_quota(&f) => return Ok(Ruled::Exhausted(f)),
             TurnEnd::Failed(_) | TurnEnd::Loop | TurnEnd::Stall(_) => {
                 self.notice(
                     index,
@@ -71,8 +91,10 @@ impl Run<'_> {
                 String::new()
             }
         };
-        if !self.reverify(i, a, implementer, live, retries).await? {
-            return Ok(false);
+        match self.reverify(i, a, implementer, live, progress).await? {
+            Reverified::Passed => {}
+            Reverified::Exhausted => return Ok(Ruled::Failed),
+            Reverified::Stagnated(s) => return Ok(Ruled::Stagnated(s)),
         }
         // No review is left to confirm these fixes: the implementer's FIXED claims stand.
         let claimed = review::fixed_claims(&answer);
@@ -91,7 +113,7 @@ impl Run<'_> {
                 .settle_findings(&self.task.id, index, round, ids, "fixed")
                 .await?;
         }
-        Ok(true)
+        Ok(Ruled::Done)
     }
 
     /// An arbiter on a pool the implementer and the reviewers did not use, preferring a
@@ -107,7 +129,7 @@ impl Run<'_> {
                 };
                 router.route_independent(&self.task, &self.steps[i], &pools_only)
             })
-            .map_err(|no| format!("no arbiter on a third pool: {}", no.reason))
+            .map_err(|no| format!("no arbiter on a third pool: {}", skip_reason(&no)))
     }
 
     /// The arbiter's attempt: its session, the batched turn and its repair. `None`

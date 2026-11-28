@@ -119,5 +119,6 @@ pub fn default_config(runtimes: &[Runtime], plan_tiers: &BTreeMap<Runtime, PlanT
         agents,
         routing,
         quota: Quota::default(),
+        debate: openchef_core::Debate::default(),
     }
 }

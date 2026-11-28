@@ -11,6 +11,7 @@ use openchef_runtime::{Failure, FailureKind, SessionRef};
 use openchef_store::{NewAttempt, StepChange};
 use time::OffsetDateTime;
 
+use crate::breakers::Progress;
 use crate::engine::{Error, Run};
 use crate::events::EventKind;
 use crate::prompts::{
@@ -76,7 +77,8 @@ impl Run<'_> {
             self.publish(ev);
         }
         let mut exclude: Vec<String> = Vec::new();
-        let mut retries = 0_u32; // feedback turns on this step, across attempts
+        // Feedback turns on this step across attempts, and the stagnation signals.
+        let mut progress = Progress::default();
         let mut earliest_reset: Option<OffsetDateTime> = None;
         let (mut kind, mut msg) = (
             TurnKind::Prompt,
@@ -104,7 +106,7 @@ impl Run<'_> {
                 },
             };
             match self
-                .attempt(i, &agent, kind, &msg, &mut retries, carry.take())
+                .attempt(i, &agent, kind, &msg, &mut progress, carry.take())
                 .await?
             {
                 AttemptEnd::Verified => return Ok(true),
@@ -122,6 +124,7 @@ impl Run<'_> {
                     patch,
                 } => {
                     exclude.push(pool.clone());
+                    progress.restart(); // the workspace was reset
                     if let Some(r) = resets_at {
                         earliest_reset = Some(earliest_reset.map_or(r, |e| e.min(r)));
                     }
@@ -337,7 +340,7 @@ impl Run<'_> {
         agent: &Agent,
         kind: TurnKind,
         msg: &str,
-        retries: &mut u32,
+        progress: &mut Progress,
         carry: Option<CarryOver>,
     ) -> Result<AttemptEnd, Error> {
         let index = self.steps[i].index;
@@ -404,7 +407,7 @@ impl Run<'_> {
         };
         let mut live = Some(live);
         let result = self
-            .attempt_turns(i, &a, agent, kind, msg, retries, seq, &mut live)
+            .attempt_turns(i, &a, agent, kind, msg, progress, seq, &mut live)
             .await;
         self.close_quietly(live, index, a.id).await;
         result
@@ -423,7 +426,7 @@ impl Run<'_> {
         agent: &Agent,
         kind: TurnKind,
         msg: &str,
-        retries: &mut u32,
+        progress: &mut Progress,
         mut seq: u32,
         live: &mut Option<Live>,
     ) -> Result<AttemptEnd, Error> {
@@ -439,13 +442,22 @@ impl Run<'_> {
                 TurnEnd::Completed(_) => {
                     let outcome = self.verify(i).await?;
                     match outcome {
-                        None => return self.reviewed_commit(i, a, agent, live, retries).await,
+                        None => return self.reviewed_commit(i, a, agent, live, progress).await,
                         Some(o) if o.passed => {
-                            return self.reviewed_commit(i, a, agent, live, retries).await;
+                            progress.passed();
+                            return self.reviewed_commit(i, a, agent, live, progress).await;
                         }
                         Some(o) => {
+                            if let Some(s) = self.failure_stagnates(&o, progress).await? {
+                                return self.stagnated(i, a, agent, live.take(), s).await;
+                            }
                             if !self
-                                .retry(i, a, retries, &format!("verification {}", o.summary()))
+                                .retry(
+                                    i,
+                                    a,
+                                    &mut progress.retries,
+                                    &format!("verification {}", o.summary()),
+                                )
                                 .await?
                             {
                                 let reason = format!(
@@ -476,7 +488,7 @@ impl Run<'_> {
                             (String::new(), String::new())
                         }
                     };
-                    if !self.retry(i, a, retries, &why).await? {
+                    if !self.retry(i, a, &mut progress.retries, &why).await? {
                         return self
                             .give_up(
                                 i,
@@ -704,7 +716,7 @@ impl Run<'_> {
 
     /// Saves the attempt's partial work as a patch, resets the workspace to the last
     /// verified commit and ends the attempt so the step can fail over (§7.2).
-    async fn exhausted(
+    pub(crate) async fn exhausted(
         &mut self,
         i: usize,
         a: &Attempt,
