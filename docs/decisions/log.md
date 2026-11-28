@@ -839,3 +839,46 @@ where they name Go packages or types, read the matching crate (`internal/<x>` �
   quota-lowered depth come with R5.4; `[debate]` configuration with it. The `findings` table
   already admits step 0 (the plan council) and `dismissed` (an arbiter's verdict) for
   R5.3, since changing a `CHECK` in SQLite rebuilds the table.
+
+## D-039 — Plan council and arbiter: critique rounds, persistent critics, one batched ruling
+*2026-11-28 · R5.3*
+
+- **Context:** §7.5 phase 2 (critics read the plan before approval) and phase 4.4 (a
+  rebutted finding goes to an arbiter on a third pool). Go stopped before M5; nothing to
+  port. Both add turns on entry plans (D-029), so each must be bounded and must never
+  block the work it judges.
+- **Options (council):** (a) rounds as revision rounds, like D-038's fix rounds, the
+  last revision unconfirmed; (b) rounds as critique rounds, the last critique's findings
+  shown at approval; (c) a fresh critic session per round, or (d) one kept across
+  rounds. **(arbiter):** (e) an arbiter turn per disputed finding inside the review loop;
+  (f) one batched turn per step after the loop.
+- **Challenge:** a plan always passes a person before anything runs, unlike a commit, so
+  (b) leaves the final word to the user instead of spending a revision nobody checks.
+  A fresh critic (c) re-reads the repository every round, the most expensive part of a
+  critique; a kept session (d) reads once and sees the revision, at the cost of anchoring
+  on its first view, which the "report again only what is still present" rule limits.
+  (e) multiplies turns by findings and interleaves with fixes; (f) costs one turn and
+  sees all disputes against the final diff. Letting the implementer rebut an upheld
+  finding again would make the loop unbounded.
+- **Decision:** (b), (d), (f). Council depth by the task's importance raised to the
+  highest step importance the planner proposed: `high` 1 critic, ≤ 2 critique rounds;
+  `critical` 2 critics on two other providers when available, ≤ 3. Critics are `council`
+  attempts at step 0 in `plan` mode; a plan finding is located by a repository file or
+  `contract: "step N"` within the plan, else it is a nit; ids are stored as
+  `<critic>/<id>`. The planner revises in its own session with no rebuttal channel; a
+  failing critic is dropped and an invalid revision keeps the last valid plan, so the
+  council never blocks approval. The arbiter runs once per step when any blocker or
+  major is `disputed`, on a pool neither the implementer nor any reviewer used,
+  preferring a provider none of them is; verdicts are strict JSON (one reasoned
+  `uphold`/`dismiss` per finding, one repair turn). `dismiss` → `dismissed`; `uphold` →
+  `open` and one fix turn in which rebuttals are no longer accepted, re-verified, with
+  `FIXED` claims taken. Critics, reviewers and arbiters route through one
+  `Router::route_independent` (runtimes and pools to avoid), with the `review` phase's
+  routing settings. Migration 0005 lets critics of one task run side by side (one
+  running attempt per critic instead of per role); every other role keeps one running
+  attempt per step.
+- **Consequences:** council cost ≤ critics × rounds critiques + (rounds − 1) revisions
+  (+ repairs); arbitration ≤ 1 ruling (+1 repair) + 1 fix per step. `openchef plan` and
+  `status` list the council's open findings next to the plan. A daemon restart during the
+  council restarts planning (D-037). Quota admission of these turns and the task-wide
+  budget come with R5.4. `--importance` on the CLI is still missing (#52).
